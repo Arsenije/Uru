@@ -126,9 +126,24 @@ export class UruSettingTab extends PluginSettingTab {
 		const last = s.lastIndexedAt ? new Date(s.lastIndexedAt).toLocaleString() : "never";
 		new Setting(containerEl)
 			.setName("Re-index vault")
-			.setDesc(`Indexes new and changed notes only. Last indexed: ${last}.`)
+			.setDesc(`Last indexed: ${last}.`)
 			.addButton((b) =>
-				b.setCta().setButtonText("Index now").onClick(() => this.plugin.indexVault()),
+				b
+					.setCta()
+					.setButtonText("Index new/changed")
+					.onClick(async () => {
+						await this.plugin.reindex(false);
+						this.display();
+					}),
+			)
+			.addButton((b) =>
+				b
+					.setButtonText("Force re-index all")
+					.setTooltip("Re-send every note, ignoring the change detector")
+					.onClick(async () => {
+						await this.plugin.reindex(true);
+						this.display();
+					}),
 			);
 
 		containerEl.createEl("h3", { text: "Models" });

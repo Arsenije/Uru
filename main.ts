@@ -46,6 +46,11 @@ export default class UruPlugin extends Plugin {
 			callback: () => this.indexVault(),
 		});
 		this.addCommand({
+			id: "uru-force-reindex",
+			name: "Force re-index (all notes)",
+			callback: () => void this.reindex(true),
+		});
+		this.addCommand({
 			id: "uru-stop-indexing",
 			name: "Stop indexing",
 			checkCallback: (checking) => {
@@ -160,7 +165,7 @@ export default class UruPlugin extends Plugin {
 		);
 		await this.indexer.load();
 		this.indexer.registerVaultEvents((off) => this.eventOffs.push(off));
-		if (this.settings.autoIndexOnStartup) void this.runFullIndex(false);
+		if (this.settings.autoIndexOnStartup) void this.reindex(false);
 	}
 
 	// ---- public API used by settings / views ----------------------------
@@ -184,10 +189,11 @@ export default class UruPlugin extends Plugin {
 	}
 
 	indexVault(): void {
-		void this.runFullIndex(false);
+		void this.reindex(false);
 	}
 
-	private async runFullIndex(force = false): Promise<void> {
+	/** Run a full index. force=true re-sends every note, ignoring the hash gate. */
+	async reindex(force = false): Promise<void> {
 		if (!this.indexer) {
 			new Notice("Uru backend not ready");
 			return;
