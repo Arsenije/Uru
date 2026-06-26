@@ -1,1 +1,62 @@
-/* Uru plugin styles */
+/* Uru recall view */
+.uru-recall {
+	padding: 0.5rem;
+}
+.uru-recall-bar {
+	display: flex;
+	gap: 0.4rem;
+	margin-bottom: 0.6rem;
+}
+.uru-recall-input {
+	flex: 1;
+}
+.uru-recall-status {
+	color: var(--text-muted);
+	padding: 0.5rem 0;
+}
+.uru-recall-section {
+	font-size: var(--font-ui-smaller);
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	color: var(--text-faint);
+	margin: 0.4rem 0 0.2rem;
+}
+.uru-recall-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+	margin-bottom: 0.6rem;
+}
+.uru-recall-chip {
+	font-size: var(--font-ui-smaller);
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	padding: 0.1rem 0.45rem;
+}
+.uru-recall-item {
+	padding: 0.5rem 0;
+	border-top: 1px solid var(--background-modifier-border);
+}
+.uru-recall-item-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.5rem;
+}
+.uru-recall-title {
+	cursor: pointer;
+	font-weight: var(--font-semibold);
+}
+.uru-recall-title:hover {
+	text-decoration: underline;
+}
+.uru-recall-score {
+	color: var(--text-faint);
+	font-size: var(--font-ui-smaller);
+}
+.uru-recall-snippet {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	margin-top: 0.2rem;
+	white-space: pre-wrap;
+}

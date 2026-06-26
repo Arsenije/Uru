@@ -1,0 +1,9 @@
+# Python env + spike/smoke artifacts
+.venv/
+.models/
+.spike-work/
+.smoke-work/
+.smoke-mxbai/
+*.log
+__pycache__/
+*.pyc

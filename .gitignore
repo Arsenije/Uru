@@ -4,5 +4,9 @@ main.js
 *.js.map
 data.json
 
+# Uru runtime (derived, rebuildable — never commit)
+.uru-data/
+index-state.json
+
 # OS
 .DS_Store
