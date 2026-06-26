@@ -4,6 +4,7 @@
 .spike-work/
 .smoke-work/
 .smoke-mxbai/
+.idx-test/
 *.log
 __pycache__/
 *.pyc

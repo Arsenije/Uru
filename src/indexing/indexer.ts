@@ -5,7 +5,6 @@ import type { UruSettings } from "../settings";
 import { HashStore } from "./hashStore";
 
 const DEBOUNCE_MS = 1_500;
-const BATCH_SIZE = 25;
 
 /** Compile a single glob (`**`, `*`, `?`) to a RegExp anchored to the full path. */
 function globToRegExp(glob: string): RegExp {
@@ -124,28 +123,30 @@ export class Indexer {
 				return;
 			}
 
+			// Index per note via requestUrl (the proven path) — reliable in the
+			// Obsidian renderer and gives per-note progress + doc-id capture.
 			let done = 0;
-			for (let i = 0; i < docs.length; i += BATCH_SIZE) {
-				const batch = docs.slice(i, i + BATCH_SIZE);
-				for await (const ev of client.indexFull(batch)) {
-					if (ev.event === "progress") {
-						notice.setMessage(`Uru: indexing ${done + ev.completed}/${docs.length}`);
-					} else if (ev.event === "error") {
-						throw new Error(ev.message);
-					}
-				}
-				// Mark the batch indexed. (We re-remember per file to capture doc ids.)
-				for (const d of batch) {
-					this.store.set(d.external_id, {
-						hash: d.metadata!.hash as string,
-						docId: this.store.get(d.external_id)?.docId ?? "",
+			let failed = 0;
+			for (const doc of docs) {
+				notice.setMessage(`Uru: indexing ${done + 1}/${docs.length} — ${doc.title}`);
+				try {
+					const res = await client.remember(doc);
+					this.store.set(doc.external_id, {
+						hash: doc.metadata!.hash as string,
+						docId: res.document_id,
 						lastIndexed: Date.now(),
 					});
+				} catch {
+					failed++;
 				}
-				done += batch.length;
-				await this.store.save();
+				done++;
+				if (done % 10 === 0) await this.store.save();
 			}
-			notice.setMessage(`Uru: indexed ${docs.length} notes`);
+			await this.store.save();
+			notice.setMessage(
+				`Uru: indexed ${done - failed}/${docs.length} notes` +
+					(failed ? ` (${failed} failed)` : ""),
+			);
 		} catch (e) {
 			notice.setMessage(`Uru: index failed — ${(e as Error).message}`);
 		} finally {

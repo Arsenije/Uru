@@ -74,11 +74,6 @@ export interface BatchDocument {
 	metadata?: Record<string, unknown>;
 }
 
-export type IndexProgress =
-	| { event: "progress"; completed: number; total: number }
-	| ({ event: "done" } & BatchResult)
-	| { event: "error"; message: string };
-
 /** Typed HTTP client for the Uru sidecar control API. */
 export class SidecarClient {
 	constructor(
@@ -128,36 +123,6 @@ export class SidecarClient {
 		} catch {
 			/* the process is exiting; a dropped connection is expected */
 		}
-	}
-
-	/**
-	 * Full index over `documents`, yielding NDJSON progress events.
-	 * Uses fetch (not requestUrl) for streaming response bodies.
-	 */
-	async *indexFull(documents: BatchDocument[]): AsyncGenerator<IndexProgress> {
-		const resp = await fetch(`${this.baseUrl}/index/full`, {
-			method: "POST",
-			headers: { "content-type": "application/json", ...this.authHeader },
-			body: JSON.stringify({ documents }),
-		});
-		if (!resp.ok || !resp.body) {
-			throw new Error(`index/full failed: HTTP ${resp.status}`);
-		}
-		const reader = resp.body.getReader();
-		const decoder = new TextDecoder();
-		let buf = "";
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			buf += decoder.decode(value, { stream: true });
-			let nl: number;
-			while ((nl = buf.indexOf("\n")) >= 0) {
-				const line = buf.slice(0, nl).trim();
-				buf = buf.slice(nl + 1);
-				if (line) yield JSON.parse(line) as IndexProgress;
-			}
-		}
-		if (buf.trim()) yield JSON.parse(buf.trim()) as IndexProgress;
 	}
 
 	private async post<T>(path: string, body: unknown): Promise<T> {

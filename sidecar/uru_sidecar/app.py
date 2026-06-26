@@ -12,6 +12,7 @@ import json
 import logging
 
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .lifecycle import SidecarRuntime
@@ -23,6 +24,15 @@ log = logging.getLogger("uru.sidecar")
 
 def build_app(runtime: SidecarRuntime) -> FastAPI:
     app = FastAPI(title="Uru sidecar")
+    # Obsidian's renderer issues a CORS preflight for fetch() with a JSON body +
+    # Authorization header (used by the streaming /index/full call). Allow it —
+    # the Bearer token is the real gate and we only bind 127.0.0.1.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     token = runtime.config.token
 
     def require_auth(authorization: str = Header(default="")) -> None:
