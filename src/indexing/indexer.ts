@@ -99,19 +99,24 @@ export class Indexer {
 
 	// ---- full index ------------------------------------------------------
 
-	async fullIndex(force = false): Promise<void> {
+	/**
+	 * Incremental full index: walks the vault but only (re)sends new/changed
+	 * notes (content-hash gate) and forgets deleted ones. Pass force=true to
+	 * re-index everything. Progress is reported via the status callback (status
+	 * bar); no per-note notifications. Returns true if it ran to completion.
+	 */
+	async fullIndex(force = false): Promise<boolean> {
 		const client = this.client();
 		if (!client) {
 			new Notice("Uru backend not ready");
-			return;
+			return false;
 		}
 		if (this.indexing) {
 			new Notice("Uru is already indexing");
-			return;
+			return false;
 		}
 		this.indexing = true;
 		this.cancelRequested = false;
-		const notice = new Notice("Uru: indexing…", 0);
 		try {
 			const files = this.app.vault.getMarkdownFiles().filter((f) => !this.isIgnored(f.path));
 			const present = new Set(files.map((f) => f.path));
@@ -119,9 +124,7 @@ export class Indexer {
 			// Deletions: tracked notes that no longer exist.
 			for (const known of this.store.knownPaths()) {
 				if (!present.has(known)) {
-					const entry = this.store.get(known);
 					await client.forget(known).catch(() => undefined);
-					void entry;
 					this.store.delete(known);
 				}
 			}
@@ -137,12 +140,12 @@ export class Indexer {
 			}
 
 			if (docs.length === 0) {
-				notice.setMessage("Uru: nothing to index");
-				return;
+				new Notice("Uru: nothing to index");
+				return true;
 			}
 
 			// Index per note via requestUrl (the proven path) — reliable in the
-			// Obsidian renderer and gives per-note progress + doc-id capture.
+			// Obsidian renderer; progress shown in the status bar only.
 			let done = 0;
 			let failed = 0;
 			let stopped = false;
@@ -152,7 +155,6 @@ export class Indexer {
 					break;
 				}
 				this.onIndexStatus({ done, total: docs.length, current: doc.title ?? doc.external_id });
-				notice.setMessage(`Uru: indexing ${done + 1}/${docs.length} — ${doc.title}`);
 				try {
 					const res = await client.remember(doc);
 					this.store.set(doc.external_id, {
@@ -167,19 +169,20 @@ export class Indexer {
 				if (done % 10 === 0) await this.store.save();
 			}
 			await this.store.save();
-			notice.setMessage(
+			new Notice(
 				stopped
 					? `Uru: stopped at ${done}/${docs.length}`
 					: `Uru: indexed ${done - failed}/${docs.length} notes` +
 							(failed ? ` (${failed} failed)` : ""),
 			);
+			return !stopped;
 		} catch (e) {
-			notice.setMessage(`Uru: index failed — ${(e as Error).message}`);
+			new Notice(`Uru: index failed — ${(e as Error).message}`);
+			return false;
 		} finally {
 			this.indexing = false;
 			this.cancelRequested = false;
 			this.onIndexStatus(null);
-			setTimeout(() => notice.hide(), 4_000);
 		}
 	}
 

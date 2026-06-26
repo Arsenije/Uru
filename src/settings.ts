@@ -22,6 +22,8 @@ export interface UruSettings {
 	ignoreGlobs: string[];
 	includeFrontmatter: boolean;
 	autoIndexOnStartup: boolean;
+	/** Epoch ms of the last completed full index, or null if never. */
+	lastIndexedAt: number | null;
 
 	// Storage — default outside the vault so Obsidian Sync never touches it.
 	dbPath: string;
@@ -40,6 +42,7 @@ export const DEFAULT_SETTINGS: UruSettings = {
 	ignoreGlobs: [".obsidian/**", ".trash/**", "templates/**"],
 	includeFrontmatter: false,
 	autoIndexOnStartup: false,
+	lastIndexedAt: null,
 	dbPath: "",
 };
 
@@ -120,9 +123,10 @@ export class UruSettingTab extends PluginSettingTab {
 				t.inputEl.rows = 4;
 			});
 
+		const last = s.lastIndexedAt ? new Date(s.lastIndexedAt).toLocaleString() : "never";
 		new Setting(containerEl)
 			.setName("Re-index vault")
-			.setDesc("Run a full index now.")
+			.setDesc(`Indexes new and changed notes only. Last indexed: ${last}.`)
 			.addButton((b) =>
 				b.setCta().setButtonText("Index now").onClick(() => this.plugin.indexVault()),
 			);

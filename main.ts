@@ -160,7 +160,7 @@ export default class UruPlugin extends Plugin {
 		);
 		await this.indexer.load();
 		this.indexer.registerVaultEvents((off) => this.eventOffs.push(off));
-		if (this.settings.autoIndexOnStartup) void this.indexer.fullIndex(false);
+		if (this.settings.autoIndexOnStartup) void this.runFullIndex(false);
 	}
 
 	// ---- public API used by settings / views ----------------------------
@@ -184,12 +184,20 @@ export default class UruPlugin extends Plugin {
 	}
 
 	indexVault(): void {
+		void this.runFullIndex(false);
+	}
+
+	private async runFullIndex(force = false): Promise<void> {
 		if (!this.indexer) {
 			new Notice("Uru backend not ready");
 			return;
 		}
 		this.indexer.recompileIgnore();
-		void this.indexer.fullIndex(false);
+		const completed = await this.indexer.fullIndex(force);
+		if (completed) {
+			this.settings.lastIndexedAt = Date.now();
+			await this.saveSettings();
+		}
 	}
 
 	private async openRecall(): Promise<void> {
