@@ -1,0 +1,752 @@
+"""Engine-plugin registry for dream-phase orchestration (#661, #667).
+
+Each registered engine plugin implements :class:`DreamCapable` and
+encapsulates the per-op ``plan_*`` calls under one ``plan_dream`` entry
+point. The orchestrator runtime-checks every plugin against the
+Protocol before dispatching.
+
+Phase 4 (#667) introduces real per-op apply handlers. The orchestrator
+walks each :class:`DreamOp` in the plan, looks up the handler via
+:func:`get_apply_handler`, and invokes it inside its own
+coordinator transaction. Handlers return an :class:`UndoRecord`; ops
+without a handler (Phase 1 audit ops) return ``None`` and are skipped.
+
+Stability: **internal** (Phase 1.0). The Protocol itself
+(:class:`DreamCapable`) is internal until the dream surface stabilizes.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4
+
+from loguru import logger
+
+from khora.dream.engines.chronicle import (
+    plan_chronicle_abstention_drift,
+    plan_chronicle_event_clustering,
+    plan_chronicle_fact_compaction,
+    plan_chronicle_tombstone_audit,
+)
+from khora.dream.engines.vectorcypher import (
+    plan_vectorcypher_centroid_recompute,
+    plan_vectorcypher_community_summary,
+    plan_vectorcypher_contradiction_detect,
+    plan_vectorcypher_contradiction_reconcile,
+    plan_vectorcypher_dedupe_entities,
+    plan_vectorcypher_normalize_schema,
+    plan_vectorcypher_orphan_report,
+    plan_vectorcypher_prune_edges,
+    plan_vectorcypher_schema_drift,
+    plan_vectorcypher_source_chunk_ids_audit,
+    plan_vectorcypher_source_chunk_ids_gc,
+)
+from khora.dream.exceptions import DreamForbiddenOpError
+from khora.dream.plan import Checkpoint, DreamOp, DreamPlan, DreamScope, OpKind
+from khora.dream.result import DreamDiff, DreamProgress, DreamResult, DreamRunInfo, OpSummary, UndoRecord
+from khora.exceptions import KhoraError
+
+if TYPE_CHECKING:
+    from khora.dream.config import DreamConfig
+    from khora.extraction.skills.base import ExpertiseConfig
+    from khora.khora import Khora
+
+
+# Per-op apply-handler signature. Handlers run inside an orchestrator-owned
+# coordinator transaction; they take the op + the open session and return
+# an :class:`UndoRecord`. Returning ``None`` is reserved for ops that have
+# no apply handler (Phase 1 audit ops).
+ApplyHandler = Callable[..., Awaitable["UndoRecord"]]
+
+
+# ---------------------------------------------------------------------------
+# Plan-hash canonicalization
+# ---------------------------------------------------------------------------
+
+
+def canonical_plan_payload(plan: DreamPlan) -> str:
+    """Return a stable JSON serialization for hashing a :class:`DreamPlan`.
+
+    The ops' decision-bearing fields (``op_type``, ``inputs``,
+    ``outputs``, ``decision``) feed the hash. ``outputs`` is included
+    because for mutation ops (notably dedupe, #1266) the merge/retire set
+    lives in ``outputs[0]["merges"]`` — excluding it would make a
+    merge-set drift between the planned and resumed run invisible to the
+    checkpoint guard. ``op_id`` is excluded because it is randomly
+    generated per plan-build and would defeat the purpose of a
+    drift-detection hash on resume.
+    """
+    payload = {
+        "namespace_id": str(plan.namespace_id),
+        "ops": [
+            {
+                "op_type": str(op.op_type),
+                "inputs": _jsonable(op.inputs),
+                "outputs": _jsonable(op.outputs),
+                "decision": op.decision,
+            }
+            for op in plan.ops
+        ],
+    }
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
+def plan_hash(plan: DreamPlan) -> str:
+    """SHA1[:16] of ``canonical_plan_payload``. Hex, lowercase.
+
+    SHA1 is used for a stability/identity digest only, never for
+    authentication — bandit S324 is silenced via ``usedforsecurity``.
+    """
+    return hashlib.sha1(  # noqa: S324
+        canonical_plan_payload(plan).encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:16]
+
+
+def _jsonable(value: object) -> object:
+    """Recursively coerce a value to a json-serializable form."""
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, UUID):
+        return str(value)
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Engine plugins
+# ---------------------------------------------------------------------------
+
+
+# Document-deletion op kinds. Banned today (Documents are tombstone-only).
+# Phase 4+ may introduce a soft-delete variant but it will not appear in
+# this list — it would be a separate, bi-temporal op kind.
+_FORBIDDEN_OP_KINDS: frozenset[str] = frozenset(
+    {
+        "delete_document",
+        "document_delete",
+        "documents_delete",
+    }
+)
+
+
+# ---------------------------------------------------------------------------
+# Apply-handler dispatch (#667)
+# ---------------------------------------------------------------------------
+#
+# Each OpKind that has an apply path maps to the name of a function the
+# corresponding engine submodule exports. Lookup is lazy via importlib so
+# this module can stay decoupled from individual handler modules — the
+# parallel agents writing the handlers only need to export the name listed
+# below. Phase 1 audit ops (e.g. CHRONICLE_TOMBSTONE_AUDIT) are absent
+# from the map; the orchestrator treats that as a no-op pass-through.
+
+_APPLY_HANDLER_NAMES: dict[OpKind, tuple[str, str]] = {
+    # (module-path, attribute-name)
+    OpKind.VECTORCYPHER_DEDUPE_ENTITIES: (
+        "khora.dream.engines.vectorcypher.dedupe_entities",
+        "apply_vectorcypher_dedupe_entities",
+    ),
+    OpKind.VECTORCYPHER_CENTROID_RECOMPUTE: (
+        "khora.dream.engines.vectorcypher.centroid_recompute",
+        "apply_vectorcypher_centroid_recompute",
+    ),
+    OpKind.VECTORCYPHER_SOURCE_CHUNK_IDS_GC: (
+        "khora.dream.engines.vectorcypher.source_chunk_ids_gc",
+        "apply_vectorcypher_source_chunk_ids_gc",
+    ),
+    OpKind.VECTORCYPHER_PRUNE_EDGES: (
+        "khora.dream.engines.vectorcypher.prune_edges",
+        "apply_vectorcypher_prune_edges",
+    ),
+    OpKind.CHRONICLE_FACT_COMPACTION: (
+        "khora.dream.engines.chronicle.fact_compaction",
+        "apply_chronicle_fact_compaction",
+    ),
+    OpKind.CHRONICLE_EVENT_CLUSTERING: (
+        "khora.dream.engines.chronicle.event_clustering",
+        "apply_chronicle_event_clustering",
+    ),
+    OpKind.VECTORCYPHER_COMMUNITY_SUMMARY: (
+        "khora.dream.engines.vectorcypher.community_summary",
+        "apply_vectorcypher_community_summary",
+    ),
+    OpKind.VECTORCYPHER_CONTRADICTION_DETECT: (
+        "khora.dream.engines.vectorcypher.contradiction_detect",
+        "apply_vectorcypher_contradiction_detect",
+    ),
+    OpKind.VECTORCYPHER_CONTRADICTION_RECONCILE: (
+        "khora.dream.engines.vectorcypher.contradiction_reconcile",
+        "apply_vectorcypher_contradiction_reconcile",
+    ),
+    OpKind.VECTORCYPHER_NORMALIZE_SCHEMA: (
+        "khora.dream.engines.vectorcypher.normalize_schema",
+        "apply_vectorcypher_normalize_schema",
+    ),
+}
+
+
+def get_apply_handler(op_type: OpKind | str) -> ApplyHandler | None:
+    """Resolve the apply handler for ``op_type``.
+
+    Returns ``None`` for Phase 1 audit ops that don't carry an apply
+    handler. The orchestrator treats ``None`` as "skip — no mutation
+    needed".
+
+    Looking up via importlib means the engine submodule does not need
+    to import its handler from the registry, and the registry does not
+    need to import the handler at module load. The parallel handler
+    implementations land in their respective engine submodules.
+
+    Raises:
+        DreamForbiddenOpError: ``op_type`` lives in
+            :data:`_FORBIDDEN_OP_KINDS`. Defense in depth — the safety
+            floor check should have rejected the plan first, but this
+            re-check makes the apply path safe against a buggy
+            ``_validate_no_forbidden_ops`` call site.
+    """
+    op_type_str = str(op_type)
+    if op_type_str in _FORBIDDEN_OP_KINDS:
+        raise DreamForbiddenOpError(
+            f"Apply-handler lookup for forbidden op_type={op_type_str!r}; "
+            "_validate_no_forbidden_ops should have aborted the run earlier."
+        )
+
+    try:
+        op_kind = OpKind(op_type_str)
+    except ValueError:
+        # Unknown op_type — treat as no-handler so the orchestrator's
+        # pass-through path runs.
+        return None
+
+    entry = _APPLY_HANDLER_NAMES.get(op_kind)
+    if entry is None:
+        return None
+
+    import importlib
+
+    module_path, attr = entry
+    module = importlib.import_module(module_path)
+    handler = getattr(module, attr, None)
+    if handler is None:
+        # Handler module exists but the symbol is missing — a parallel
+        # agent has not landed yet. Treat as no-handler so the
+        # orchestrator continues (and the missing handler surfaces as a
+        # test failure in the handler's own ticket, not this one).
+        return None
+    return handler
+
+
+def _validate_no_forbidden_ops(plan: DreamPlan) -> None:
+    """Reject any plan that touches the safety floor.
+
+    Called at both plan-time (after the engine builds the plan) and
+    apply-time (before any op runs). Defense in depth.
+    """
+    for op in plan.ops:
+        if str(op.op_type) in _FORBIDDEN_OP_KINDS:
+            raise DreamForbiddenOpError(
+                f"Plan op {op.op_id} carries forbidden op_type={op.op_type!r}; "
+                "Document deletes are not permitted in the dream phase."
+            )
+
+
+class _ChroniclePlugin:
+    """``DreamCapable`` plugin wrapping chronicle Phase 1 audit ops."""
+
+    @property
+    def dream_capabilities(self) -> frozenset[OpKind]:
+        return frozenset(
+            {
+                OpKind.CHRONICLE_ABSTENTION_DRIFT_REPORT,
+                OpKind.CHRONICLE_TOMBSTONE_AUDIT,
+                OpKind.CHRONICLE_FACT_COMPACTION,
+                OpKind.CHRONICLE_EVENT_CLUSTERING,
+            }
+        )
+
+    async def plan_dream(
+        self,
+        kb: Khora,
+        namespace_id: UUID,
+        *,
+        scope: DreamScope,
+        config: DreamConfig,
+        expertise: ExpertiseConfig | None = None,
+    ) -> DreamPlan:
+        del expertise  # chronicle audits don't consult expertise in Phase 1
+        ops: list[DreamOp] = []
+        skip_reasons: list[dict[str, Any]] = []
+        wanted = _resolved_scope(
+            scope,
+            self.dream_capabilities,
+            skip_reasons=skip_reasons,
+            engine_name="chronicle",
+        )
+
+        if OpKind.CHRONICLE_ABSTENTION_DRIFT_REPORT in wanted:
+            engine = kb._get_engine()
+            # The op reads the engine's chronicle abstention thresholds. Both
+            # engines now expose ``_abstention_*`` attrs (#1331), so the
+            # ``hasattr`` guard would route this chronicle-specific op to a
+            # VectorCypher engine. Gate on the active engine name instead: if
+            # the orchestrator routed abstention-drift to a non-chronicle
+            # engine, that's a misconfig - raise rather than silently produce
+            # a meaningless report.
+            if getattr(kb, "_engine_name", None) != "chronicle":
+                raise KhoraError("chronicle abstention drift requested but active engine is not a ChronicleEngine")
+            op = await plan_chronicle_abstention_drift(namespace_id, engine=engine, config=config)
+            ops.append(op)
+
+        if OpKind.CHRONICLE_TOMBSTONE_AUDIT in wanted:
+            coordinator = kb.storage
+            async with coordinator.transaction() as txn:
+                op = await plan_chronicle_tombstone_audit(namespace_id, session=txn.session, config=config)
+            ops.append(op)
+
+        # Fact compaction is the only hard-delete op; gate it on the
+        # documented ``ops.compact_facts`` toggle so a plain
+        # ``kb.dream(mode="apply")`` does not reclaim rows unless the
+        # operator opted in (#1067). ``memory_facts`` rows are persisted
+        # under the resolved row-level namespace id, so resolve before
+        # selecting candidates (mirrors the vectorcypher planners).
+        if OpKind.CHRONICLE_FACT_COMPACTION in wanted and config.ops.compact_facts:
+            coordinator = kb.storage
+            resolved_ns = await coordinator.resolve_namespace(namespace_id)
+            async with coordinator.transaction() as txn:
+                compaction_ops = await plan_chronicle_fact_compaction(resolved_ns, session=txn.session, config=config)
+            ops.extend(compaction_ops)
+
+        # Event clustering soft-merges near-duplicate chronicle_events;
+        # gate on ``ops.cluster_events`` and resolve the namespace the same
+        # way (events are stored under the row-level id too).
+        if OpKind.CHRONICLE_EVENT_CLUSTERING in wanted and config.ops.cluster_events:
+            coordinator = kb.storage
+            resolved_ns = await coordinator.resolve_namespace(namespace_id)
+            async with coordinator.transaction() as txn:
+                clustering_ops = await plan_chronicle_event_clustering(
+                    resolved_ns, session=txn.session, config=config, _skip_reasons=skip_reasons
+                )
+            ops.extend(clustering_ops)
+
+        return DreamPlan(
+            plan_id=uuid4(),
+            namespace_id=namespace_id,
+            ops=tuple(ops),
+            metadata={"skip_reasons": skip_reasons} if skip_reasons else {},
+        )
+
+    async def apply_dream(
+        self,
+        plan: DreamPlan,
+        *,
+        checkpoint: Checkpoint | None = None,
+        on_progress: Callable[[DreamProgress], Awaitable[None]] | None = None,
+    ) -> DreamResult:
+        del checkpoint, on_progress  # Phase 1 ops are pure observation
+        _validate_no_forbidden_ops(plan)
+        return _build_pass_through_result(plan, mode="apply")
+
+
+class _VectorCypherPlugin:
+    """``DreamCapable`` plugin wrapping vectorcypher Phase 1 audit ops."""
+
+    @property
+    def dream_capabilities(self) -> frozenset[OpKind]:
+        return frozenset(
+            {
+                OpKind.VECTORCYPHER_SCHEMA_DRIFT_REPORT,
+                OpKind.VECTORCYPHER_ORPHAN_REPORT,
+                OpKind.VECTORCYPHER_SOURCE_CHUNK_IDS_AUDIT,
+                OpKind.VECTORCYPHER_SOURCE_CHUNK_IDS_GC,
+                OpKind.VECTORCYPHER_COMMUNITY_SUMMARY,
+                OpKind.VECTORCYPHER_PRUNE_EDGES,
+                OpKind.VECTORCYPHER_CONTRADICTION_DETECT,
+                OpKind.VECTORCYPHER_CONTRADICTION_RECONCILE,
+                OpKind.VECTORCYPHER_NORMALIZE_SCHEMA,
+                OpKind.VECTORCYPHER_DEDUPE_ENTITIES,
+                OpKind.VECTORCYPHER_CENTROID_RECOMPUTE,
+            }
+        )
+
+    async def plan_dream(
+        self,
+        kb: Khora,
+        namespace_id: UUID,
+        *,
+        scope: DreamScope,
+        config: DreamConfig,
+        expertise: ExpertiseConfig | None = None,
+    ) -> DreamPlan:
+        ops: list[DreamOp] = []
+        skip_reasons: list[dict[str, Any]] = []
+        wanted = _resolved_scope(
+            scope,
+            self.dream_capabilities,
+            skip_reasons=skip_reasons,
+            engine_name="vectorcypher",
+        )
+        coordinator = kb.storage
+
+        if OpKind.VECTORCYPHER_SCHEMA_DRIFT_REPORT in wanted:
+            # schema_drift requires an ExpertiseConfig; skip when caller
+            # didn't supply one rather than crashing.
+            if expertise is not None:
+                op = await plan_vectorcypher_schema_drift(
+                    namespace_id,
+                    coordinator=coordinator,
+                    expertise=expertise,
+                )
+                ops.append(op)
+            else:
+                # Requested but no ExpertiseConfig to diff against - record a
+                # skip_reason so the omission is observable rather than a
+                # silent drop (#1036, ADR-001).
+                op_label = str(OpKind.VECTORCYPHER_SCHEMA_DRIFT_REPORT)
+                logger.warning(
+                    "dream: dropping {op} - it requires an ExpertiseConfig; "
+                    "pass kb.dream(..., expertise=...) to run it",
+                    op=op_label,
+                )
+                skip_reasons.append(
+                    {
+                        "op_kind": op_label,
+                        "reason": "op_requires_expertise",
+                        "detail": "schema_drift needs an ExpertiseConfig to diff the observed type taxonomy against; none supplied",
+                    }
+                )
+
+        if OpKind.VECTORCYPHER_ORPHAN_REPORT in wanted:
+            op = await plan_vectorcypher_orphan_report(
+                namespace_id,
+                coordinator=coordinator,
+                expertise=expertise,
+                pr_percentile_threshold=config.orphan_pr_percentile_threshold,
+                cooccurrence_edge_weight=config.cooccurrence_edge_weight,
+            )
+            ops.append(op)
+
+        if OpKind.VECTORCYPHER_SOURCE_CHUNK_IDS_AUDIT in wanted:
+            op = await plan_vectorcypher_source_chunk_ids_audit(namespace_id, coordinator=coordinator)
+            ops.append(op)
+
+        if OpKind.VECTORCYPHER_COMMUNITY_SUMMARY in wanted and config.community_summary_enabled:
+            community_ops = await plan_vectorcypher_community_summary(
+                namespace_id,
+                coordinator=coordinator,
+                min_size=config.community_summary_min_size,
+                cooccurrence_edge_weight=config.cooccurrence_edge_weight,
+                max_members_per_prompt=config.community_summary_max_members_per_prompt,
+            )
+            ops.extend(community_ops)
+
+        if OpKind.VECTORCYPHER_PRUNE_EDGES in wanted and config.prune_edges_enabled:
+            prune_ops = await plan_vectorcypher_prune_edges(
+                namespace_id,
+                coordinator=coordinator,
+                target_predicates=tuple(config.prune_edges_target_predicates),
+                confidence_threshold=config.prune_edges_confidence_threshold,
+            )
+            ops.extend(prune_ops)
+
+        if OpKind.VECTORCYPHER_CONTRADICTION_DETECT in wanted and config.contradiction_detect_enabled:
+            op = await plan_vectorcypher_contradiction_detect(
+                namespace_id,
+                coordinator=coordinator,
+                similarity_threshold=config.contradiction_detect_similarity_threshold,
+            )
+            ops.append(op)
+
+        # #1281 — two-LLM-judged reconcile op. Default OFF; when requested but
+        # disabled, record a structured skip_reason so "off" reads apart from
+        # "no candidates". The judge runs at apply time (budget-gated).
+        if OpKind.VECTORCYPHER_CONTRADICTION_RECONCILE in wanted:
+            if config.contradiction_reconcile_enabled:
+                op = await plan_vectorcypher_contradiction_reconcile(
+                    namespace_id,
+                    coordinator=coordinator,
+                    similarity_threshold=config.contradiction_detect_similarity_threshold,
+                )
+                ops.append(op)
+            else:
+                skip_reasons.append(
+                    _disabled_skip_reason(
+                        OpKind.VECTORCYPHER_CONTRADICTION_RECONCILE,
+                        "contradiction_reconcile_enabled",
+                    )
+                )
+
+        if OpKind.VECTORCYPHER_NORMALIZE_SCHEMA in wanted:
+            normalize_ops = await plan_vectorcypher_normalize_schema(
+                namespace_id,
+                coordinator=coordinator,
+                config=config,
+            )
+            ops.extend(normalize_ops)
+
+        # #1263 — make the three mutation ops reachable from plan_dream.
+        # Each is gated by a default-OFF master switch; when requested but
+        # disabled we record a structured skip_reason so the caller can
+        # tell "off" apart from "no work". The dedupe op feeds the
+        # centroid-recompute clusters so the two stay coherent in one plan.
+        dedupe_ops: list[DreamOp] = []
+        if OpKind.VECTORCYPHER_DEDUPE_ENTITIES in wanted:
+            if config.dedupe_entities_enabled:
+                degradations: list[dict[str, Any]] = []
+                dedupe_ops = await plan_vectorcypher_dedupe_entities(
+                    namespace_id,
+                    coordinator=coordinator,
+                    default_threshold=config.dedupe_entities_default_threshold,
+                    per_type_thresholds=config.dedupe_entities_per_type_thresholds,
+                    degradations=degradations,
+                )
+                ops.extend(dedupe_ops)
+                skip_reasons.extend(_degradations_as_skip_reasons(degradations))
+            else:
+                skip_reasons.append(
+                    _disabled_skip_reason(OpKind.VECTORCYPHER_DEDUPE_ENTITIES, "dedupe_entities_enabled")
+                )
+
+        if OpKind.VECTORCYPHER_SOURCE_CHUNK_IDS_GC in wanted:
+            if config.source_chunk_ids_gc_enabled:
+                gc_ops = await plan_vectorcypher_source_chunk_ids_gc(
+                    namespace_id,
+                    coordinator=coordinator,
+                    min_dead=config.source_chunk_ids_gc_min_dead,
+                )
+                ops.extend(gc_ops)
+            else:
+                skip_reasons.append(
+                    _disabled_skip_reason(OpKind.VECTORCYPHER_SOURCE_CHUNK_IDS_GC, "source_chunk_ids_gc_enabled")
+                )
+
+        if OpKind.VECTORCYPHER_CENTROID_RECOMPUTE in wanted:
+            if config.centroid_recompute_enabled:
+                clusters = _merge_clusters_from_dedupe(dedupe_ops)
+                if clusters:
+                    centroid_ops = await plan_vectorcypher_centroid_recompute(
+                        namespace_id,
+                        coordinator=coordinator,
+                        merge_clusters=clusters,
+                        lev_threshold=config.centroid_lev_threshold,
+                        min_intra_cluster_cosine=config.centroid_min_intra_cluster_cosine,
+                    )
+                    ops.extend(centroid_ops)
+                else:
+                    skip_reasons.append(
+                        {
+                            "op_kind": str(OpKind.VECTORCYPHER_CENTROID_RECOMPUTE),
+                            "reason": "no_merge_clusters",
+                            "detail": (
+                                "centroid_recompute requires merge clusters from a dedupe plan; "
+                                "none were produced (enable VECTORCYPHER_DEDUPE_ENTITIES with candidate pairs)."
+                            ),
+                        }
+                    )
+            else:
+                skip_reasons.append(
+                    _disabled_skip_reason(OpKind.VECTORCYPHER_CENTROID_RECOMPUTE, "centroid_recompute_enabled")
+                )
+
+        return DreamPlan(
+            plan_id=uuid4(),
+            namespace_id=namespace_id,
+            ops=tuple(ops),
+            metadata={"skip_reasons": skip_reasons} if skip_reasons else {},
+        )
+
+    async def apply_dream(
+        self,
+        plan: DreamPlan,
+        *,
+        checkpoint: Checkpoint | None = None,
+        on_progress: Callable[[DreamProgress], Awaitable[None]] | None = None,
+    ) -> DreamResult:
+        del checkpoint, on_progress
+        _validate_no_forbidden_ops(plan)
+        return _build_pass_through_result(plan, mode="apply")
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _disabled_skip_reason(op_kind: OpKind, flag_name: str) -> dict[str, Any]:
+    """Structured skip_reason for a requested-but-disabled mutation op (#1263)."""
+    return {
+        "op_kind": str(op_kind),
+        "reason": "op_disabled_by_config",
+        "detail": f"{flag_name} is False; enable it (default OFF) to plan this op.",
+    }
+
+
+def _degradations_as_skip_reasons(degradations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Forward planner ADR-001 degradations onto the plan's skip_reasons.
+
+    The dedupe planner records degradations (e.g. missing embeddings) in an
+    out-parameter list; the dream result carries them through the
+    ``skip_reasons`` channel so operators can see *why* a plan
+    under-consolidated.
+    """
+    out: list[dict[str, Any]] = []
+    for deg in degradations:
+        out.append(
+            {
+                "op_kind": str(OpKind.VECTORCYPHER_DEDUPE_ENTITIES),
+                "reason": deg.get("reason", "degraded"),
+                "detail": deg.get("detail", ""),
+                "component": deg.get("component"),
+                "count": deg.get("count"),
+            }
+        )
+    return out
+
+
+def _merge_clusters_from_dedupe(dedupe_ops: list[DreamOp]) -> list[list[UUID]]:
+    """Reconstruct merge clusters (canonical + absorbed ids) from dedupe ops.
+
+    Each planned dedupe op carries ``outputs[0]["merges"]``; the cluster
+    is ``{canonical_id}`` plus ``{absorbed_id ...}`` for that op. Centroid
+    recompute consumes these to decide each cluster's post-merge embedding.
+    """
+    clusters: list[list[UUID]] = []
+    for op in dedupe_ops:
+        if op.decision != "planned" or not op.outputs:
+            continue
+        merges = op.outputs[0].get("merges") or []
+        member_ids: list[UUID] = []
+        seen: set[UUID] = set()
+        for merge in merges:
+            for key in ("canonical_id", "absorbed_id"):
+                raw = merge.get(key)
+                if raw is None:
+                    continue
+                try:
+                    uid = UUID(str(raw))
+                except (TypeError, ValueError):
+                    continue
+                if uid not in seen:
+                    seen.add(uid)
+                    member_ids.append(uid)
+        if len(member_ids) >= 2:
+            clusters.append(member_ids)
+    return clusters
+
+
+def _resolved_scope(
+    scope: DreamScope,
+    capabilities: frozenset[OpKind],
+    *,
+    skip_reasons: list[dict[str, Any]] | None = None,
+    engine_name: str | None = None,
+) -> frozenset[OpKind]:
+    """Intersect requested op_kinds with the plugin's capabilities.
+
+    When ``skip_reasons`` is supplied, every requested op kind that the
+    plugin does not own is appended as
+    ``{"op_kind": str, "reason": "op_not_supported_by_engine", "detail": ...}``
+    and a single ``logger.warning`` is emitted naming the dropped kinds.
+    This is the observability fix for #876: callers were previously
+    unable to distinguish "no work needed" from "your op silently fell
+    off the floor".
+    """
+    if scope.op_kinds is None:
+        return capabilities
+    requested = frozenset(scope.op_kinds)
+    resolved = requested & capabilities
+    if skip_reasons is not None:
+        dropped = requested - capabilities
+        if dropped:
+            dropped_names = sorted(str(op) for op in dropped)
+            engine_label = engine_name or "<unknown>"
+            logger.warning(
+                "dream: dropping op_kinds not supported by engine {engine}: {ops}",
+                engine=engine_label,
+                ops=dropped_names,
+            )
+            for op_kind in dropped:
+                skip_reasons.append(
+                    {
+                        "op_kind": str(op_kind),
+                        "reason": "op_not_supported_by_engine",
+                        "detail": (f"engine={engine_label!r} does not list this op kind in dream_capabilities"),
+                    }
+                )
+    return resolved
+
+
+def _build_pass_through_result(plan: DreamPlan, *, mode: str) -> DreamResult:
+    """Build a :class:`DreamResult` from a plan whose ops are all complete.
+
+    Phase 1 ops carry their decision and outputs from the plan call
+    itself (they're pure observation), so the apply pass just re-shapes
+    the plan into a result. ``skip_reasons`` attached to
+    :attr:`DreamPlan.metadata` are forwarded onto the result so callers
+    can distinguish empty outcomes (no candidates, op not supported,
+    guardrail tripped) from work that simply happened to be empty.
+    """
+    now = datetime.now(UTC)
+    summaries: dict[str, OpSummary] = {}
+    for op in plan.ops:
+        key = str(op.op_type)
+        cur = summaries.get(key) or OpSummary(op_type=key)
+        summaries[key] = OpSummary(
+            op_type=key,
+            planned=cur.planned + 1,
+            applied=cur.applied + 1,
+            skipped=cur.skipped,
+            failed=cur.failed,
+        )
+
+    info = DreamRunInfo(
+        run_id=uuid4(),
+        namespace_id=plan.namespace_id,
+        mode="apply" if mode == "apply" else "dry-run",
+        started_at=now,
+        finished_at=now,
+        duration_ms=0.0,
+    )
+    skip_reasons = list(plan.metadata.get("skip_reasons", ()))
+    return DreamResult(
+        run=info,
+        diff=DreamDiff(),
+        ops=tuple(summaries.values()),
+        metadata={"skip_reasons": skip_reasons},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Public registry surface
+# ---------------------------------------------------------------------------
+
+
+_REGISTRY: dict[str, object] = {
+    "chronicle": _ChroniclePlugin(),
+    "vectorcypher": _VectorCypherPlugin(),
+}
+
+
+def get_engine_plugin(engine_name: str) -> object:
+    """Return the registered plugin for ``engine_name``.
+
+    Raises:
+        KhoraError: when no plugin is registered for the engine.
+    """
+    plugin = _REGISTRY.get(engine_name)
+    if plugin is None:
+        raise KhoraError(f"engine {engine_name!r} doesn't support dream phase (no DreamCapable plugin registered)")
+    return plugin
+
+
+__all__ = [
+    "ApplyHandler",
+    "canonical_plan_payload",
+    "get_apply_handler",
+    "get_engine_plugin",
+    "plan_hash",
+]

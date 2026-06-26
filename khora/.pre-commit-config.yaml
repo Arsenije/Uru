@@ -1,0 +1,44 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff-check
+        args: [--fix, --line-length=120]
+      - id: ruff-format
+        args: [--line-length=120]
+
+  - repo: local
+    hooks:
+      # Diff-aware locally (scans only the staged src/ python files) so commits
+      # stay fast and never trigger semgrep-core's full-tree eio/io_uring hang
+      # on recent kernels (#1347). CI runs the full `semgrep ... src/` scan for
+      # comprehensive coverage; both are warn-mode (no --error → exit 0 on
+      # findings), so this only narrows LOCAL scope, not enforcement.
+      - id: secret-typing
+        name: secret typing (warn-mode, diff-aware)
+        entry: uvx semgrep --config .semgrep.yml
+        language: system
+        pass_filenames: true
+        files: ^src/.*\.py$
+
+      - id: ty
+        name: ty
+        entry: uv run ty check src/
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: no-agents-md
+        name: refuse AGENTS.md in index
+        entry: AGENTS.md is gitignored (locally regenerated); do not git add -f
+        language: fail
+        files: '^AGENTS\.md$'

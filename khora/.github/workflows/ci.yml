@@ -1,0 +1,793 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# ---------------------------------------------------------------------------
+# Shared cache key for the Python venv.  Every job that needs the installed
+# packages restores the same cache entry, so `uv sync` becomes a no-op (~2s).
+#
+# UV_NO_SYNC stops ``uv run`` from re-syncing the restored venv. The
+# ``install`` job already pinned the right extras combo (crewai, no
+# google-adk) and cached the resulting .venv; without UV_NO_SYNC every
+# downstream ``uv run`` invocation would re-resolve extras against the
+# conflict-marked lockfile and silently swap opentelemetry-sdk 1.34
+# (compatible with logfire 4.6) for 1.40 (incompatible — missing
+# LogData), breaking import of logfire at pytest-collection time.
+# The ``install`` and ``test-google-adk`` jobs call ``uv sync`` directly,
+# which is unaffected by UV_NO_SYNC.
+# ---------------------------------------------------------------------------
+env:
+  VENV_CACHE_KEY: venv-${{ github.run_id }}
+  UV_CACHE_KEY_PREFIX: uv-Linux-py3.13
+  UV_NO_SYNC: "1"
+
+jobs:
+  # ============================================================================
+  # Secret typing — detect str-typed secret fields in Pydantic models and
+  # dataclasses. Severity WARNING: CI reports findings but does not block
+  # while existing findings are remediated. Flip to ERROR in .semgrep.yml
+  # once the backlog is clear.
+  # ============================================================================
+  secret-typing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Secret typing check (warn-mode)
+        run: uvx semgrep --config .semgrep.yml src/
+
+  # ============================================================================
+  # Guard — refuse to track AGENTS.md (mirrors local pre-commit hook)
+  # ============================================================================
+  no-agents-md:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Refuse tracked AGENTS.md
+        run: |
+          if git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1; then
+            echo "AGENTS.md must not be tracked (it is gitignored and locally regenerated)."
+            exit 1
+          fi
+
+  # ============================================================================
+  # Install — build the venv once, cache it for parallel jobs
+  # ============================================================================
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies
+        # ``crewai`` and ``google-adk`` extras are declared as conflicts in
+        # ``[tool.uv]`` (crewai pins opentelemetry-api<1.35; google-adk pins
+        # >=1.36). CI installs the crewai combo by default — the google-adk
+        # adapter has its own dedicated unit-test job (see ``test-google-adk``).
+        run: uv sync --all-extras --no-extra google-adk
+
+      - name: Save venv cache
+        uses: actions/cache/save@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+
+  # ============================================================================
+  # Security — pip-audit (parallel with lint and test)
+  # ============================================================================
+  security:
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Restore venv cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: |
+          uv export --no-dev --no-hashes > /tmp/pip-audit-requirements.txt
+          # Allowlist for upstream CVEs with no fix version available. Each entry
+          # must explain why khora's usage does not reach the vulnerable code.
+          # Revisit weekly — tracking issue: #778.
+          uvx pip-audit -r /tmp/pip-audit-requirements.txt --progress-spinner off \
+            --ignore-vuln PYSEC-2024-277 \
+            --ignore-vuln PYSEC-2025-211 \
+            --ignore-vuln PYSEC-2025-212 \
+            --ignore-vuln PYSEC-2025-213 \
+            --ignore-vuln PYSEC-2025-214 \
+            --ignore-vuln PYSEC-2025-215 \
+            --ignore-vuln PYSEC-2025-216 \
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln PYSEC-2025-218 \
+            --ignore-vuln PYSEC-2025-189 \
+            --ignore-vuln PYSEC-2025-190 \
+            --ignore-vuln PYSEC-2025-191 \
+            --ignore-vuln PYSEC-2025-192 \
+            --ignore-vuln PYSEC-2025-193 \
+            --ignore-vuln PYSEC-2025-194 \
+            --ignore-vuln PYSEC-2025-195 \
+            --ignore-vuln PYSEC-2025-196 \
+            --ignore-vuln PYSEC-2025-197 \
+            --ignore-vuln PYSEC-2025-210 \
+            --ignore-vuln PYSEC-2026-139 \
+            --ignore-vuln CVE-2025-3000
+          # Justifications (each --ignore-vuln above corresponds to one line here):
+          #   PYSEC-2024-277        joblib NumpyArrayWrapper deserialization — disputed by maintainer; khora never imports joblib (transitive dep only, no untrusted .joblib files loaded).
+          #   PYSEC-2025-211        transformers Perceiver checkpoint RCE — khora never instantiates Perceiver; CrossEncoder loads vetted reranker model IDs only.
+          #   PYSEC-2025-212        transformers Transformer-XL checkpoint RCE — khora never loads Transformer-XL; reranker model IDs are hard-coded vetted IDs.
+          #   PYSEC-2025-213        transformers megatron_gpt2 checkpoint RCE — khora never loads megatron_gpt2; reranker model IDs are hard-coded vetted IDs.
+          #   PYSEC-2025-214        transformers SEW convert_config RCE — khora never runs checkpoint conversion; only from_pretrained on vetted IDs (via sentence-transformers).
+          #   PYSEC-2025-215        transformers SEW-D convert_config RCE — khora never runs checkpoint conversion.
+          #   PYSEC-2025-216        transformers HuBERT convert_config RCE — khora never runs checkpoint conversion.
+          #   PYSEC-2025-217        transformers X-CLIP checkpoint conversion RCE — khora never loads X-CLIP or runs checkpoint conversion.
+          #   PYSEC-2025-218        transformers GLM4 checkpoint deserialization RCE — khora never loads GLM4; reranker model IDs are hard-coded vetted IDs.
+          #   PYSEC-2025-189        torch.ops.profiler memory corruption — khora never uses torch.profiler or the tuple-handler path; library-only, no profiling entry points.
+          #   PYSEC-2025-190        torch nnq_Sigmoid quantized-init flaw — local-only attack; khora never uses torch quantization (nnq_*).
+          #   PYSEC-2025-191        torch.mkldnn_max_pool2d DoS — local-only, disputed by maintainer; khora never calls mkldnn ops directly.
+          #   PYSEC-2025-192        torch.nn.utils.rnn.pad_packed_sequence corruption — local-only; khora never uses RNN packing utilities.
+          #   PYSEC-2025-193        torch.nn.utils.rnn.unpack_sequence corruption — local-only; khora never uses RNN packing utilities.
+          #   PYSEC-2025-194        torch.jit.script memory corruption — local-only; khora never uses TorchScript / torch.jit.
+          #   PYSEC-2025-195        torch.lstm_cell memory corruption — local-only; khora never calls torch.lstm_cell directly.
+          #   PYSEC-2025-196        torch.jit.jit_module_from_flatbuffer corruption — local-only; khora never loads flatbuffer JIT modules.
+          #   PYSEC-2025-197        torch CUDA caching_allocator_delete corruption — local-only, CUDA-only; khora reranker runs on CPU by default and never calls caching_allocator_delete.
+          #   PYSEC-2025-210        torch.profiler PythonTracer hang/DoS — khora never uses torch.profiler.
+          #   PYSEC-2026-139        torch pt2 Load Handler deserialization — khora never loads .pt2 archives; CrossEncoder loads safetensors via huggingface_hub from vetted IDs.
+          #   CVE-2025-3000         torch.jit.script list-attribute memory corruption (segfault) — local-only DoS, same class as PYSEC-2025-194 and no fix version available; khora never uses TorchScript / torch.jit (the CrossEncoder reranker runs on CPU via sentence-transformers only).
+        continue-on-error: false
+
+  # ============================================================================
+  # Lint — ty type check + prek (formatting, linting, imports)
+  # ============================================================================
+  lint:
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Restore venv cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-
+
+      - name: Sync venv on cache miss
+        # The ~2.9GB venv cache is evicted under the per-repo 10GB cache budget
+        # when many PR runs compete. A miss here used to be unrecoverable:
+        # UV_NO_SYNC=1 (set workflow-wide) stops ``uv run`` from re-syncing, so
+        # the step crashed with ``Failed to spawn`` / ``ModuleNotFoundError:
+        # No module named 'khora'``. Rebuild the venv deterministically on a
+        # miss (same crewai combo as the ``install`` job) so the job self-heals
+        # without a full re-run. No-op on a cache hit.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: uv sync --locked --all-extras --no-extra google-adk
+
+      - name: Type check with ty
+        run: uv run ty check src/
+
+      - name: Run prek checks (formatting, linting, imports)
+        run: uv run prek run --all-files --hook-stage manual
+        env:
+          SKIP: ty  # ty already ran above — skip duplicate
+
+      - name: Optional-import discipline (khora.integrations adapters)
+        # Per ADR #619 — adapter submodules under
+        # src/khora/integrations/<framework>/ must NOT import their
+        # framework at module top level. The AST lint enforces this so
+        # `pip install khora` keeps working without the optional extra.
+        run: uv run python tools/check_optional_imports.py
+
+  # ============================================================================
+  # Test (unit) — pytest unit + recall suites with coverage, no services.
+  # ============================================================================
+  # Hermetic: no database side-car. tests/recall/ is fully hermetic — its
+  # remaining suites (validator, AST, compiler-dispatch, the skeleton
+  # filter_ast forwarding + pushed_down derivation, and the sqlite_lance
+  # embedded chronicle filter test) need no Postgres; the live-pg filter
+  # coverage moved to the filter-conformance corpus (its own CI job). This job
+  # also owns the per-path coverage floor check: all floor paths
+  # (sqlite_lance/*, chronicle/engine.py, _fts5.py, _accel.py) are exercised by
+  # the unit + embedded suites, not by the Postgres integration tests, so the
+  # floors must be measured here.
+  test-unit:
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Restore venv cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-
+
+      - name: Sync venv on cache miss
+        # The ~2.9GB venv cache is evicted under the per-repo 10GB cache budget
+        # when many PR runs compete. A miss here used to be unrecoverable:
+        # UV_NO_SYNC=1 (set workflow-wide) stops ``uv run`` from re-syncing, so
+        # ``uv run pytest`` crashed with ``Failed to spawn: pytest``. Rebuild
+        # the venv deterministically on a miss (same crewai combo as the
+        # ``install`` job) so the job self-heals without a full re-run. No-op
+        # on a cache hit.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: uv sync --locked --all-extras --no-extra google-adk
+
+      - name: Restore HuggingFace model cache
+        # Cache the cross-encoder model (BAAI/bge-reranker-v2-m3, ~2.3 GB) so
+        # it is downloaded at most once per branch rather than on every run.
+        # Without caching, shared GitHub runner IPs hit HF 429 rate-limits
+        # intermittently and the reranking tests fail with a network error.
+        # HF_TOKEN (belt-and-suspenders) is only effective when the repo secret
+        # is set — see PR body for how to add it.
+        # NOTE: maintainer must add HF_TOKEN as a repo secret for the token
+        # leg to take effect; the cache leg works independently of the token.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-bge-reranker-v2-m3
+
+      - name: Verify migration source files and ORM/migration drift
+        run: uv run pytest tests/unit/test_migration_drift.py -v -o "addopts=" --no-cov
+
+      - name: Run unit tests with coverage (parallel)
+        # tests/recall/ holds the recall-filter suite (validator, AST,
+        # compiler-dispatch) and is fully hermetic — no Postgres needed; collect
+        # it here so the filter tests gate in CI. The live-pg row-narrowing proof
+        # lives in the filter-conformance corpus (its own job).
+        #
+        # tests/e2e/ holds the recall-filter end-to-end harness. The embedded
+        # sqlite_lance lane is hermetic (no services) and is the must-always-run
+        # lane, so it gates here; the live PG+Neo4j / chronicle modules carry the
+        # ``slow`` marker (excluded by the default ``-m "not slow ..."`` addopts)
+        # AND a reachability self-skip, so they collect and skip cleanly with no
+        # services. The dedicated slow/e2e job for the live lanes is a follow-up.
+        #
+        # tests/security/ holds the hermetic cross-namespace IDOR signature gate —
+        # collection-time, ``inspect``-only, no services.
+        env:
+          # Belt-and-suspenders token for HF anonymous rate-limits (#1249).
+          # Only effective when the HF_TOKEN repo secret is set; safe to omit.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run pytest tests/unit/ tests/recall/ tests/e2e/ tests/security/ -m "not slow and not filter_conformance" --cov=src/khora --cov-branch --cov-report=xml:coverage-unit.xml --cov-fail-under=0 -n auto --timeout=120 --timeout-method=thread
+
+      - name: Generate JSON coverage for floor check
+        run: uv run coverage json -o coverage.json
+
+      - name: Check per-path coverage floors
+        run: uv run python scripts/check_coverage_floors.py
+
+      - name: Upload unit coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-unit.xml
+          flags: unit
+          name: khora-coverage-unit
+          fail_ci_if_error: false
+
+  # ============================================================================
+  # Test (integration) — pytest integration suite against a real Postgres.
+  # ============================================================================
+  # Postgres is a GitHub-Actions services side-car (pgvector image, since the
+  # schema has Vector(1536) columns and tests CREATE EXTENSION vector). Host
+  # port 5434 mirrors compose.yaml so the default DSN works and a developer
+  # reproduces CI 1:1 with `make dev`. Three stacked tripwires keep a DB-down
+  # run from passing by skipping the Postgres-gated tests: the services
+  # health-check (gates step start), an explicit readiness step (mirrors the
+  # weaviate job), and KHORA_PG_REQUIRED=1 (makes the conftest guard abort
+  # loudly if Postgres is somehow unreachable).
+  # The `alembic upgrade head` step brings the shared DB to head before the
+  # suite runs (it also doubles as a `CREATE EXTENSION vector` smoke that fails
+  # loudly on a wrong image), guaranteeing base tables for assume-exists tests.
+  # Tests run serially (`-n 0`) because several issue `DROP SCHEMA public
+  # CASCADE` against the one shared database.
+  test-integration:
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Job-level env so every step (migrations, pytest, the conftest guard)
+    # inherits the same Postgres DSN and the loud-DB-down flag. The Neo4j
+    # vars match the contract the integration tests read (KHORA_NEO4J_URL /
+    # _USERNAME / _PASSWORD, defaults bolt://localhost:7687, neo4j, password)
+    # and NEO4J_INTEGRATION_TEST=1 flips the per-module skipif so the Neo4j
+    # graph-backend tests actually run against the side-car.
+    env:
+      KHORA_DATABASE_URL: postgresql://khora:khora@localhost:5434/khora
+      KHORA_PG_REQUIRED: "1"
+      KHORA_NEO4J_URL: bolt://localhost:7687
+      KHORA_NEO4J_USERNAME: neo4j
+      KHORA_NEO4J_PASSWORD: password
+      NEO4J_INTEGRATION_TEST: "1"
+      # Memgraph side-car for the dream flat soft-delete mirror gate (#1278). The
+      # integration test reads KHORA_MEMGRAPH_URL and self-skips if unreachable.
+      # 7688 on the runner avoids colliding with the Neo4j side-car's 7687.
+      KHORA_MEMGRAPH_URL: bolt://localhost:7688
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: khora
+          POSTGRES_PASSWORD: khora
+          POSTGRES_DB: khora
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U khora -d khora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      neo4j:
+        image: neo4j:2025.12.1
+        env:
+          NEO4J_AUTH: neo4j/password
+        ports:
+          - 7687:7687
+        # wget the HTTP endpoint on 7474 — mirrors the compose.yaml
+        # healthcheck for this image. neo4j images take ~20-40s to start,
+        # so a generous retry budget keeps the gate from going green early.
+        options: >-
+          --health-cmd "wget -q --spider http://localhost:7474 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 30s
+      memgraph:
+        # Flat soft-delete dream-mirror gate (#1278). 3.x supports the list
+        # comprehension + WHERE forms the Memgraph CRUD path emits (2.x does not).
+        # No volume → runs as the image's `memgraph` user with no ownership clash.
+        image: memgraph/memgraph:3.11.0
+        ports:
+          - 7688:7687
+        # Memgraph ships no curl/wget and /bin/sh is dash (no /dev/tcp); probe
+        # Bolt with the bundled mgconsole client.
+        options: >-
+          --health-cmd "echo 'RETURN 1;' | mgconsole --host 127.0.0.1 --port 7687 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 15s
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Restore venv cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-
+
+      - name: Sync venv on cache miss
+        # The ~2.9GB venv cache is evicted under the per-repo 10GB cache budget
+        # when many PR runs compete. A miss here used to be unrecoverable:
+        # UV_NO_SYNC=1 (set workflow-wide) stops ``uv run`` from re-syncing, so
+        # ``uv run alembic`` / ``uv run pytest`` crashed with ``Failed to
+        # spawn``. Rebuild the venv deterministically on a miss (same crewai
+        # combo as the ``install`` job) so the job self-heals without a full
+        # re-run. No-op on a cache hit.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: uv sync --locked --all-extras --no-extra google-adk
+
+      - name: Restore HuggingFace model cache
+        # Integration tests call kb.recall() with the default config which has
+        # enable_reranking=True, triggering a download of BAAI/bge-reranker-v2-m3
+        # (~2.3 GB). Without caching, shared runner IPs hit HF 429 rate-limits
+        # intermittently. Cache the model directory across runs so it is fetched
+        # at most once per branch. HF_TOKEN (belt-and-suspenders for anonymous
+        # rate limits) only takes effect when the repo secret is set.
+        # NOTE: maintainer must add HF_TOKEN as a repo secret for the token
+        # leg to take effect; the cache leg works independently of the token.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-bge-reranker-v2-m3
+
+      - name: Wait for Postgres readiness
+        # Mirrors the weaviate-integration job's readiness loop for repo-style
+        # consistency. The services health-check already gates step start; this
+        # gives a clear, early failure message if Postgres is somehow not up.
+        run: |
+          for i in $(seq 1 30); do
+            if pg_isready -h localhost -p 5434 -U khora >/dev/null 2>&1; then
+              echo "postgres ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "postgres did not become ready within 60s"
+          exit 1
+
+      - name: Wait for Neo4j readiness
+        # Mirrors the Postgres/Weaviate readiness loops. The services
+        # health-check already gates step start, but neo4j images take
+        # 20-40s to boot, so poll the bolt port (7687) here for a clear,
+        # early failure message if the side-car is somehow not up. Uses a
+        # bash /dev/tcp probe so no extra client (cypher-shell) is needed.
+        run: |
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/7687) >/dev/null 2>&1; then
+              echo "neo4j bolt ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "neo4j did not become ready within 60s"
+          exit 1
+
+      - name: Wait for Memgraph readiness
+        # Mirrors the Neo4j readiness loop for the #1278 dream-mirror gate. The
+        # service healthcheck already gates step start, so fail fast on timeout
+        # (like the Neo4j loop) rather than letting the test silently self-skip
+        # and the Memgraph gate pass without running. The test's own
+        # reachability-skip stays as the graceful path for local dev only.
+        run: |
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/localhost/7688) >/dev/null 2>&1; then
+              echo "memgraph bolt ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "memgraph did not become ready within 60s"
+          exit 1
+
+      - name: Apply database migrations
+        # env.py normalizes the plain DSN to asyncpg internally and takes the
+        # advisory lock, so a single upgrade-head here brings the shared DB to
+        # head before the suite runs. Also a CREATE EXTENSION vector smoke —
+        # fails loudly if the image lacks pgvector.
+        run: uv run alembic upgrade head
+
+      - name: Run integration tests with coverage
+        # KHORA_PG_REQUIRED=1 (job env) flips the per-module skipif into a hard
+        # session abort (tests/integration/conftest.py) — a DB-down run cannot
+        # pass by silently skipping the Postgres-gated tests.
+        #
+        # tests/unit/dream/test_locks.py holds @pytest.mark.integration
+        # advisory-lock tests that need real Postgres; they live under
+        # tests/unit/ so the unit job's no-services run self-skips them. Collect
+        # the file here (still under -m integration) so they gate against the
+        # real side-car; its pure-unit lock-id tests stay in the unit job.
+        #
+        # ``-n 0`` (SERIAL): several PG tests issue ``DROP SCHEMA public
+        # CASCADE`` against the single shared database, so running them in
+        # parallel under xdist would corrupt each other's schema.
+        #
+        # ``--cov-fail-under=0`` is deliberate, not a placeholder: the
+        # integration suite alone is structurally low-coverage (most src is
+        # unit-covered), so an integration-only floor would gate almost nothing.
+        # The 77 aggregate stays in Codecov's combined project status, and the
+        # loud-DB-down guarantee is the KHORA_PG_REQUIRED guard + the migration
+        # step (both fail red on PG-down) — not a coverage-collapse signal.
+        env:
+          # Belt-and-suspenders token for HF anonymous rate-limits (#1249).
+          # Only effective when the HF_TOKEN repo secret is set; safe to omit.
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          uv run pytest tests/integration/ tests/unit/dream/test_locks.py -m "integration and not filter_conformance" -n 0 --cov=src/khora --cov-branch --cov-report=xml:coverage-integration.xml --cov-fail-under=0 --timeout=120 --timeout-method=thread
+
+      - name: Upload integration coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage-integration.xml
+          flags: integration
+          name: khora-coverage-integration
+          fail_ci_if_error: false
+
+  # ============================================================================
+  # Test (google-adk) — dedicated job for the google-adk adapter's unit tests
+  # ============================================================================
+  # The ``crewai`` and ``google-adk`` extras conflict on opentelemetry-api
+  # (crewai pins <1.35, google-adk pins >=1.36) — see ``[tool.uv].conflicts``.
+  # The main ``install`` job uses the crewai combo. This job builds a separate
+  # venv with the google-adk combo and runs the adapter's unit tests only.
+  test-google-adk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install dependencies (google-adk combo)
+        run: uv sync --all-extras --no-extra crewai
+
+      - name: Run google-adk adapter unit tests
+        run: |
+          uv run pytest tests/unit/integrations/google_adk/ tests/unit/integrations/test_no_eager_imports.py --no-cov -q
+
+  # ============================================================================
+  # Examples smoke — drift gate + runnable smoke for every adapter example
+  # ============================================================================
+  # Foundation state: no examples/integrations/<framework>/ dirs exist yet, so
+  # the smoke loop is a no-op and the drift gate has nothing to compare. The
+  # job still runs to keep the contract visible. When an adapter merges its
+  # example.py + pyproject.toml under examples/integrations/<name>/, this job
+  # picks it up automatically — no workflow change needed.
+  examples-smoke:
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Restore venv cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-
+
+      - name: Sync venv on cache miss
+        # The ~2.9GB venv cache is evicted under the per-repo 10GB cache budget
+        # when many PR runs compete. A miss here used to be unrecoverable:
+        # UV_NO_SYNC=1 (set workflow-wide) stops ``uv run`` from re-syncing, so
+        # the drift gate / example runs crashed with ``Failed to spawn`` /
+        # ``ModuleNotFoundError: No module named 'khora'``. Rebuild the venv
+        # deterministically on a miss (same crewai combo as the ``install``
+        # job) so the job self-heals without a full re-run. No-op on a cache
+        # hit.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: uv sync --locked --all-extras --no-extra google-adk
+
+      - name: Doc/example drift gate
+        run: uv run python tools/check_examples_drift.py
+
+      - name: Smoke-test adapter examples
+        # Keep the smoke run hermetic (the examples document "runs without
+        # external services"). The default config has enable_reranking=True
+        # with BAAI/bge-reranker-v2-m3, so each example would HEAD-revalidate /
+        # download a ~2.3GB cross-encoder from huggingface.co. When HF
+        # rate-limits the shared runner IP (429 + retry backoff) the example
+        # burns the whole 60s budget and fails even though the code is fine.
+        # KHORA_QUERY_ENABLE_RERANKING=false skips the cross-encoder code path;
+        # HF_HUB_OFFLINE / TRANSFORMERS_OFFLINE are defense-in-depth so any
+        # example that re-enables reranking still cannot make a network call.
+        env:
+          KHORA_QUERY_ENABLE_RERANKING: "false"
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          shopt -s nullglob
+          dirs=(examples/integrations/*/)
+          if [ ${#dirs[@]} -eq 0 ]; then
+            echo "[examples-smoke] No adapters yet — nothing to run."
+            exit 0
+          fi
+          fail=0
+          for ex in "${dirs[@]}"; do
+            name="$(basename "$ex")"
+            if [ ! -f "$ex/example.py" ]; then
+              echo "[examples-smoke] $name: no example.py — skip."
+              continue
+            fi
+            echo "[examples-smoke] $name: syncing extras"
+            if [ -f "$ex/pyproject.toml" ]; then
+              (cd "$ex" && uv sync) || { echo "[examples-smoke] $name: uv sync failed"; fail=1; continue; }
+            fi
+            echo "[examples-smoke] $name: running example.py (60s budget)"
+            # PYTHONPATH points at the repo root so the example can
+            # ``from examples._helpers import …``. uv inherits the env
+            # but uv run's --directory only changes cwd, not the import
+            # path — without this, the helper package is unreachable
+            # because there's no ``examples/__init__.py`` at the root.
+            #
+            # 60s budget (was 30s): the crewai example runs through the
+            # full ingest pipeline + LLM stub retries and observed times
+            # around 25-34s on GitHub-hosted runners. 30s was too tight
+            # and produced intermittent flakes (#741 / v0.15.1 release).
+            if ! PYTHONPATH="${GITHUB_WORKSPACE}" timeout 60s uv run --directory "$ex" python example.py; then
+              echo "[examples-smoke] $name: FAILED"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  # ============================================================================
+  # Weaviate integration (#783) — async client against a real cluster.
+  #
+  # Spins up a stock Weaviate container as a services-block side-car and
+  # runs the @pytest.mark.integration tests gated on
+  # WEAVIATE_INTEGRATION_TEST=1. Mirrors the gating convention used by
+  # the Neo4j integration tests (NEO4J_INTEGRATION_TEST). Keeps the
+  # `test` job hermetic (no Weaviate runtime there) so the unit suite
+  # stays fast.
+  # ============================================================================
+  weaviate-integration:
+    needs: install
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      weaviate:
+        image: cr.weaviate.io/semitechnologies/weaviate:1.28.4
+        ports:
+          - 8080:8080
+          - 50051:50051
+        env:
+          QUERY_DEFAULTS_LIMIT: 25
+          AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+          PERSISTENCE_DATA_PATH: /var/lib/weaviate
+          DEFAULT_VECTORIZER_MODULE: none
+          ENABLE_MODULES: ""
+          CLUSTER_HOSTNAME: node1
+          DISABLE_TELEMETRY: "true"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+          prune-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Restore venv cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            venv-${{ runner.os }}-py3.13-${{ hashFiles('uv.lock') }}-
+
+      - name: Sync venv on cache miss
+        # The ~2.9GB venv cache is evicted under the per-repo 10GB cache budget
+        # when many PR runs compete. A miss here used to be unrecoverable:
+        # UV_NO_SYNC=1 (set workflow-wide) stops ``uv run`` from re-syncing, so
+        # ``uv run pytest`` crashed with ``Failed to spawn: pytest``. Rebuild
+        # the venv deterministically on a miss (same crewai combo as the
+        # ``install`` job) so the job self-heals without a full re-run. No-op
+        # on a cache hit.
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: uv sync --locked --all-extras --no-extra google-adk
+
+      - name: Wait for Weaviate readiness
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/v1/.well-known/ready >/dev/null; then
+              echo "weaviate ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "weaviate did not become ready within 60s"
+          exit 1
+
+      - name: Run Weaviate integration tests
+        env:
+          WEAVIATE_INTEGRATION_TEST: "1"
+          WEAVIATE_URL: "http://localhost:8080"
+          WEAVIATE_GRPC_PORT: "50051"
+        run: |
+          uv run pytest tests/integration/test_weaviate_async_integration.py \
+            --no-cov -v -m integration

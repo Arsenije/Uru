@@ -1,0 +1,1689 @@
+{
+  "_comment": "Khora telemetry public surface contract. See telemetry-contract.md. Items tagged stability=public must not break without a major version bump. Keep this file in sync with the codebase - tests/unit/telemetry/test_contract.py acts as the drift gate.",
+  "version": "1.1",
+  "service_namespace": "khora",
+  "instrumentation_scope": {
+    "name": "khora",
+    "version_source": "importlib.metadata.version('khora')",
+    "_comment": "Every span and metric carries scope=khora + version=khora package version. service.name belongs to the host application - khora never sets it."
+  },
+  "resource_attributes": [
+    {
+      "name": "khora.telemetry.contract.version",
+      "stability": "public",
+      "value_source": "this file's `version` field",
+      "_comment": "Stable across khora patch releases. Bump alongside the contract version. Lets dashboards filter by telemetry-schema version independently of khora's package version."
+    }
+  ],
+  "backends": {
+    "_comment": "Precedence order applied by khora.telemetry.configure_telemetry(). First match wins.",
+    "precedence": [
+      "backend='none' (explicit opt-out)",
+      "OTEL_SDK_DISABLED=true env",
+      "caller-supplied tracer_provider/meter_provider",
+      "non-default global TracerProvider already installed (host/logfire)",
+      "backend='logfire' or (auto + LOGFIRE_TOKEN/LOGFIRE_SEND_TO_LOGFIRE env + logfire importable)",
+      "backend='otel' or (auto + any OTEL_* env var set)",
+      "no-op"
+    ],
+    "supported": ["auto", "otel", "logfire", "none"]
+  },
+  "span_name_regex": "^khora\\.[a-z0-9_]+(\\.[a-z0-9_]+)*$",
+  "public_exports": [
+    "TelemetryCollector",
+    "NoOpCollector",
+    "get_collector",
+    "init_telemetry",
+    "shutdown_telemetry",
+    "get_trace_id",
+    "set_trace_id",
+    "ensure_trace_id",
+    "clear_trace_id",
+    "start_usage_collection",
+    "record_usage",
+    "collect_usage",
+    "trace_span",
+    "bounded_text_hash",
+    "install_neo4j_log_bridge",
+    "trace",
+    "metric_counter",
+    "metric_gauge_callback",
+    "metric_histogram",
+    "Backend",
+    "TelemetryHandle",
+    "configure_telemetry",
+    "shutdown_telemetry_providers",
+    "diagnostics"
+  ],
+  "deprecated_exports": [
+    {
+      "name": "install_neo4j_logfire_handler",
+      "stability": "deprecated",
+      "alias_for": "install_neo4j_log_bridge",
+      "deprecated_in": "0.10.8",
+      "removal_target": "0.12.0"
+    }
+  ],
+  "event_types": [
+    {
+      "name": "LLMEvent",
+      "stability": "public",
+      "fields": [
+        {
+          "name": "timestamp",
+          "type": "datetime"
+        },
+        {
+          "name": "service_name",
+          "type": "str"
+        },
+        {
+          "name": "operation",
+          "type": "str"
+        },
+        {
+          "name": "model",
+          "type": "str"
+        },
+        {
+          "name": "prompt_tokens",
+          "type": "int"
+        },
+        {
+          "name": "completion_tokens",
+          "type": "int"
+        },
+        {
+          "name": "total_tokens",
+          "type": "int"
+        },
+        {
+          "name": "latency_ms",
+          "type": "float"
+        },
+        {
+          "name": "status",
+          "type": "str"
+        },
+        {
+          "name": "error_message",
+          "type": "str | None"
+        },
+        {
+          "name": "namespace_id",
+          "type": "UUID | None"
+        },
+        {
+          "name": "metadata",
+          "type": "dict[str, Any]"
+        },
+        {
+          "name": "trace_id",
+          "type": "UUID | None"
+        },
+        {
+          "name": "parent_event_id",
+          "type": "int | None"
+        },
+        {
+          "name": "cache_hit",
+          "type": "bool"
+        },
+        {
+          "name": "batch_size",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "StorageEvent",
+      "stability": "public",
+      "fields": [
+        {
+          "name": "timestamp",
+          "type": "datetime"
+        },
+        {
+          "name": "service_name",
+          "type": "str"
+        },
+        {
+          "name": "backend",
+          "type": "str"
+        },
+        {
+          "name": "operation",
+          "type": "str"
+        },
+        {
+          "name": "latency_ms",
+          "type": "float"
+        },
+        {
+          "name": "record_count",
+          "type": "int"
+        },
+        {
+          "name": "status",
+          "type": "str"
+        },
+        {
+          "name": "error_message",
+          "type": "str | None"
+        },
+        {
+          "name": "namespace_id",
+          "type": "UUID | None"
+        },
+        {
+          "name": "metadata",
+          "type": "dict[str, Any]"
+        },
+        {
+          "name": "trace_id",
+          "type": "UUID | None"
+        },
+        {
+          "name": "parent_event_id",
+          "type": "int | None"
+        }
+      ]
+    },
+    {
+      "name": "PipelineEvent",
+      "stability": "public",
+      "fields": [
+        {
+          "name": "timestamp",
+          "type": "datetime"
+        },
+        {
+          "name": "service_name",
+          "type": "str"
+        },
+        {
+          "name": "pipeline",
+          "type": "str"
+        },
+        {
+          "name": "stage",
+          "type": "str"
+        },
+        {
+          "name": "run_id",
+          "type": "UUID | None"
+        },
+        {
+          "name": "latency_ms",
+          "type": "float"
+        },
+        {
+          "name": "input_count",
+          "type": "int"
+        },
+        {
+          "name": "output_count",
+          "type": "int"
+        },
+        {
+          "name": "status",
+          "type": "str"
+        },
+        {
+          "name": "error_message",
+          "type": "str | None"
+        },
+        {
+          "name": "namespace_id",
+          "type": "UUID | None"
+        },
+        {
+          "name": "metadata",
+          "type": "dict[str, Any]"
+        },
+        {
+          "name": "trace_id",
+          "type": "UUID | None"
+        },
+        {
+          "name": "parent_event_id",
+          "type": "int | None"
+        }
+      ]
+    }
+  ],
+  "collector_methods": [
+    "record_llm_call",
+    "record_storage_op",
+    "record_pipeline_stage"
+  ],
+  "spans": [
+    {
+      "name": "khora.recall",
+      "stability": "public",
+      "owner": "khora"
+    },
+    {
+      "name": "khora.recall.document_upgrade",
+      "stability": "internal",
+      "owner": "khora"
+    },
+    {
+      "name": "khora.remember",
+      "stability": "public",
+      "owner": "khora"
+    },
+    {
+      "name": "khora.remember_batch",
+      "stability": "public",
+      "owner": "khora"
+    },
+    {
+      "name": "khora.forget",
+      "stability": "public",
+      "owner": "khora"
+    },
+    {
+      "name": "khora.forget_session",
+      "stability": "public",
+      "owner": "khora"
+    },
+    {
+      "name": "khora.gc.expire_sessions",
+      "stability": "public",
+      "owner": "khora"
+    },
+    {
+      "name": "khora.vectorcypher.retrieve",
+      "stability": "public",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.simple_retrieve",
+      "stability": "public",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.typed_entity_recent",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.process_document",
+      "stability": "public",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.remember_batch",
+      "stability": "public",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.skeleton.chunk",
+      "stability": "public",
+      "owner": "skeleton"
+    },
+    {
+      "name": "khora.skeleton.embed",
+      "stability": "public",
+      "owner": "skeleton"
+    },
+    {
+      "name": "khora.skeleton.batch_chunk",
+      "stability": "public",
+      "owner": "skeleton"
+    },
+    {
+      "name": "khora.skeleton.batch_embed",
+      "stability": "public",
+      "owner": "skeleton"
+    },
+    {
+      "name": "khora.skeleton.batch_store",
+      "stability": "public",
+      "owner": "skeleton"
+    },
+    {
+      "name": "khora.temporal_store.search",
+      "stability": "public",
+      "owner": "skeleton"
+    },
+    {
+      "name": "khora.embedder.api_call",
+      "stability": "public",
+      "owner": "embedder"
+    },
+    {
+      "name": "khora.embedder.litellm_request",
+      "stability": "public",
+      "owner": "embedder"
+    },
+    {
+      "name": "khora.extraction.llm_call",
+      "stability": "public",
+      "owner": "extraction"
+    },
+    {
+      "name": "khora.extraction.extract_entities",
+      "stability": "public",
+      "owner": "extraction"
+    },
+    {
+      "name": "khora.query.embedding",
+      "stability": "public",
+      "owner": "query"
+    },
+    {
+      "name": "khora.query.graph_search",
+      "stability": "public",
+      "owner": "query"
+    },
+    {
+      "name": "khora.query.hyde",
+      "stability": "public",
+      "owner": "query"
+    },
+    {
+      "name": "khora.query.rerank",
+      "stability": "public",
+      "owner": "query"
+    },
+    {
+      "name": "khora.embedder.cache_lookup",
+      "stability": "internal",
+      "owner": "embedder"
+    },
+    {
+      "name": "khora.embedder.normalize",
+      "stability": "internal",
+      "owner": "embedder"
+    },
+    {
+      "name": "khora.ingest.chunk_temporal_attribution",
+      "stability": "internal",
+      "owner": "ingestion",
+      "_comment": "Wraps temporal-chunk construction in ingest._store_chunks. Attributes: chunk_count (int), occurred_at_source ('metadata'|'ingest_fallback'), source_type (bounded enum from SourceSystem + 'unknown'). Issue #568 Phase B."
+    },
+    {
+      "name": "khora.ingestion.entity_dedup",
+      "stability": "internal",
+      "owner": "ingestion"
+    },
+    {
+      "name": "khora.query.mmr_diversity",
+      "stability": "internal",
+      "owner": "query"
+    },
+    {
+      "name": "khora.vectorcypher.bm25_search_chunks",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.change_decomposition",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.chunking",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.coherence_boost",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.cypher_expand",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.ppr_retrieve",
+      "stability": "internal",
+      "owner": "vectorcypher",
+      "_comment": "Wraps the query-time Personalized PageRank retrieval path (Issue #542 - HippoRAG 2). Attributes: namespace_id (str), entry_count (int), entity_count (int, only set when graph non-empty), edge_count (int), chunk_count (int), fallback_reason (one of 'no_entry_entities'|'empty_entity_graph'|'no_seed_overlap', set only when the path degrades to vector-only)."
+    },
+    {
+      "name": "khora.vectorcypher.embed_batch",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.embed_query",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.hyde",
+      "stability": "internal",
+      "owner": "vectorcypher",
+      "_comment": "Wraps the HyDE query-embedding expansion on the default recall() path (Issue #1018). Fires only when query.enable_hyde resolves to expand for this query ('always', or 'auto' on a complex/temporal query). No attributes."
+    },
+    {
+      "name": "khora.vectorcypher.llm_reranking",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.mmr_diversity",
+      "stability": "internal",
+      "owner": "vectorcypher",
+      "_comment": "Wraps the MMR diversity selection of the final top-k chunks (Issue #1018). Fires only when query.enable_diversity is True and the candidate pool exceeds the requested limit. Attributes: candidate_count (int), k (int)."
+    },
+    {
+      "name": "khora.vectorcypher.recency_boost",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.recency_channel",
+      "stability": "internal",
+      "owner": "vectorcypher",
+      "_comment": "Wraps the parallel recency-channel SQL + cosine-relevance filter (Issue #567 A3). Attributes: namespace_id (str), limit (int), raw_count (int - chunks returned by ORDER BY occurred_at DESC), filtered_count (int - survivors after the temporal_query_relevance_floor gate)."
+    },
+    {
+      "name": "khora.vectorcypher.recency_floor_synthesis",
+      "stability": "internal",
+      "owner": "vectorcypher",
+      "_comment": "Wraps the synthetic RECENCY/CHANGE date-floor decision in retriever.py. Attributes (set by the retriever, not validated by the drift gate): synthetic_temporal_filter_applied (bool), anti_recency_veto (bool), temporal_floor_days (int|None), recency_channel_fired (bool), recency_reference_mode (str: 'wall_clock'|'corpus_max'). Issue #567 Phase A."
+    },
+    {
+      "name": "khora.vectorcypher.reranking",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.route",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.temporal_detect",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.vector_search_chunks",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.vector_search_entities",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.version_filter",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.version_history",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.skeleton_extraction",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.skeleton_build",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.session_discovery",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.fetch_entity_chunks",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.vectorcypher.rrf_fusion",
+      "stability": "internal",
+      "owner": "vectorcypher"
+    },
+    {
+      "name": "khora.ingestion.expansion",
+      "stability": "internal",
+      "owner": "ingestion"
+    },
+    {
+      "name": "khora.neo4j.upsert_entities_batch",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.retire_orphaned_entities_batch",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.create_relationships_batch",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.get_chunks_by_entities.timeout",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.get_entity_neighborhoods.timeout",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.get_relationships_between.timeout",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.get_temporal_chunks.timeout",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.get_entity_channels.timeout",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.get_neighborhood.timeout",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.neo4j.get_neighborhoods_batch.timeout",
+      "stability": "internal",
+      "owner": "neo4j"
+    },
+    {
+      "name": "khora.dream.run",
+      "stability": "public",
+      "owner": "dream",
+      "_comment": "Top-level dream run span. Attributes: run_id (str), namespace_id (str - span attr ONLY, never a metric label), mode ('dry-run'|'apply'), trigger (str). Issue #666 part of #649."
+    },
+    {
+      "name": "khora.dream.phase",
+      "stability": "public",
+      "owner": "dream",
+      "_comment": "Per-phase span (audit / mutation / ...). Attributes: run_id (str), namespace_id (str - span attr only), phase (str). Issue #666."
+    },
+    {
+      "name": "khora.dream.llm_call",
+      "stability": "public",
+      "owner": "dream",
+      "_comment": "Wraps each LLM call inside a dream phase (borderline-merge verifier, second-opinion auditor). Attributes: model, direction. Free-text prompts go through bounded_text_hash before becoming attributes. Issue #666."
+    },
+    {
+      "name": "khora.dream.undo",
+      "stability": "public",
+      "owner": "dream",
+      "_comment": "Wraps the invocation of an UndoHandle. Attributes: op_type, outcome. Issue #666."
+    },
+    {
+      "name": "khora.dream.op",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Per-op span (DreamOperationEvent). Inner-loop, internal stability. Attributes: run_id, op_id, namespace_id (span attr only), phase, op_type, decision, strategy, rationale_hash (bounded_text_hash). Issue #666."
+    },
+    {
+      "name": "khora.dream.entity_merge",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the entity-merge op kind. Issue #666."
+    },
+    {
+      "name": "khora.dream.edge_prune",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the edge-prune op kind. Issue #666."
+    },
+    {
+      "name": "khora.dream.community_summary",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the community-summary op kind (Phase 5+). Issue #666."
+    },
+    {
+      "name": "khora.dream.vectorcypher.schema_drift",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher schema-drift audit op (OpKind.VECTORCYPHER_SCHEMA_DRIFT_REPORT). Attributes: run_id, namespace_id (span attr only - never a metric label), entity_total (int), relationship_total (int), new_entity_types_count (int), unused_entity_types_count (int), entity_frequency_delta_count (int), new_relationship_types_count (int), unused_relationship_types_count (int), relationship_frequency_delta_count (int). Raw type-name strings never become metric labels per the bounded-cardinality rule. Issue #655 part of #649."
+    },
+    {
+      "name": "khora.dream.chronicle.abstention_drift",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Per-op span for the chronicle abstention-threshold drift report (read-only audit). Attributes: namespace_id (span attr only), decision ('recommend'|'insufficient_data'), direction ('lower'|'raise'|'calibrated'; only when decision=='recommend'), sample_count, top_score_p90, combined_score_p90, rationale_hash (bounded_text_hash). Issue #652 part of #649."
+    },
+    {
+      "name": "khora.dream.vectorcypher.orphan_report",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "PageRank-based orphan-entity report (#657, Phase 1.4). Attributes: run_id, op_id, namespace_id (span attr only - never a metric label per cardinality rule), phase, total_entities, candidate_count, p5_combined_score, weighting_used. Read-only audit; zero mutations, zero LLM calls."
+    },
+    {
+      "name": "khora.dream.chronicle.tombstone_audit",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the chronicle memory_facts tombstone-audit op (#654, Phase 1.2 of #649). Read-only; attributes: namespace_id (span attr only, never a metric label). The op records active/inactive/invalidated counts, tombstone_ratio, and p50/p90/oldest age in days on the DreamOp outputs."
+    },
+    {
+      "name": "khora.dream.chronicle.fact_compaction",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the chronicle memory_facts compaction planner (#664, Phase 2.4 of #649). Dry-run only in v0.14 - emits one planned DreamOp per row that would be hard-deleted (the only Phase 2 op that hard-deletes, because the tombstone is itself the soft-delete marker). Apply mode raises NotImplementedError until v0.15 (#669). Attributes: namespace_id (span attr only, never a metric label), retention_days."
+    },
+    {
+      "name": "khora.dream.vectorcypher.source_chunk_ids_gc",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher source_chunk_ids GC op (OpKind.VECTORCYPHER_SOURCE_CHUNK_IDS_GC, #662, Phase 2.3 of #649). Dry-run only in v0.14 - apply lands v0.15 via reset_entity_source_chunk_ids_batch. Plans per-entity rewrites that drop dead chunk UUIDs from Entity.source_chunk_ids. Attributes: namespace_id (span attr only, never a metric label per cardinality rule), candidate_count, min_dead, mode. Read-only at the SQL boundary; zero LLM calls."
+    },
+    {
+      "name": "khora.dream.vectorcypher.centroid_recompute",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher centroid-recompute op (OpKind.VECTORCYPHER_CENTROID_RECOMPUTE, #660, Phase 2.2 of #649). Plans the post-merge canonical embedding for each merge cluster - no writes in v0.14 (apply mode raises NotImplementedError). Attributes: op_id, namespace_id (span attr only, never a metric label per the bounded-cardinality rule), phase, cluster_size, min_pairwise_cosine, max_pairwise_lev, decision ('centroid'|'re_embed'|'skip_multimodal'|'skip_singleton')."
+    },
+    {
+      "name": "khora.dream.vectorcypher.dedupe_entities",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher cross-batch entity-resolution dedupe op (OpKind.VECTORCYPHER_DEDUPE_ENTITIES, #658 Phase 2.1 of #649). Dry-run-only in v0.14; apply mode raises NotImplementedError. Attributes: run_id, op_id, namespace_id (span attr only - never a metric label per cardinality rule), phase, total_entities, total_buckets, planned_count, skip_collision_count, default_threshold. Pure planning op - zero writes, zero LLM calls."
+    },
+    {
+      "name": "khora.dream.vectorcypher.prune_edges",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher edge-pruning op (OpKind.VECTORCYPHER_PRUNE_EDGES, #671, Phase 5.2 of #649). Soft-deletes low-confidence orphan relationship edges via bi-temporal valid_to stamp. OFF by default behind DreamConfig.prune_edges_enabled. Predicate: confidence < threshold (default 0.4) AND valid_to IS NULL AND all source chunks deleted. Default target_predicates is ['ASSOCIATED_WITH'] only - broader pruning is opt-in. Attributes: namespace_id (span attr only, never a metric label per cardinality rule), phase, threshold (float), target_predicates_count (int), candidate_count (int). Pure SELECT + UPDATE; zero LLM calls."
+    },
+    {
+      "name": "khora.dream.chronicle.event_clustering",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the chronicle_events near-duplicate clustering op (#665, Phase 2.5 of #649). Dry-run only in v0.14; apply lands in v0.15 (#669). Attributes: namespace_id (span attr only, never a metric label), threshold (float, cosine cutoff), window_days (int, referenced_date window half-width), event_count (int, total rows considered). Plan never proposes mutating chronicle_events.chunk_id - that FK powers the temporal recall channel back-pointer."
+    },
+    {
+      "name": "khora.dream.vectorcypher.community_summary",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher community-detection + LLM summary op (OpKind.VECTORCYPHER_COMMUNITY_SUMMARY, #670, Phase 5.1 of #649). First LLM-using dream op. Planner attributes: op_id, namespace_id (span attr only, never a metric label), phase=audit, total_entities, weighting_used (float, ASSOCIATED_WITH down-weight), community_count, duration_ms. Apply attributes: op_id, namespace_id (span attr only), phase=mutation, community_size, community_id_hash (bounded_text_hash), prompt_hash (bounded_text_hash), kept_claims, dropped_claims, decision ('persisted'|'noop_replay'|'no_grounded_claims'). LLM cost is recorded via khora.dream.llm.tokens through the acompletion wrapper (_telemetry_op='dream_community_summary'). The op is default-OFF behind DreamConfig.community_summary_enabled."
+    },
+    {
+      "name": "khora.dream.vectorcypher.contradiction_detect",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher contradiction-detection op (OpKind.VECTORCYPHER_CONTRADICTION_DETECT, #672, Phase 5.3 of #649). Report only - never mutates `relationships`; findings persist to the `dream_conflicts` table (migration 035) for human triage and Phase 5.4 (#673) mapping recommendations. Attributes: run_id, op_id, namespace_id (span attr only, never a metric label per cardinality rule), phase, similarity_threshold, total_relationships, live_relationships, finding_count, duration_ms, and per-finding `finding_<i>_desc_a_hash` / `finding_<i>_desc_b_hash` / `finding_<i>_reason` / `finding_<i>_similarity`. Description hashes go through bounded_text_hash - raw text never lands on the span."
+    },
+    {
+      "name": "khora.dream.vectorcypher.contradiction_reconcile",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Planner span for the vectorcypher contradiction-reconciliation op (OpKind.VECTORCYPHER_CONTRADICTION_RECONCILE, #1281, Phase 5 of dream-on-graph #1282). Opt-in two-LLM-judged promotion of contradiction_detect: only judge-AGREED invalidations soft-delete the losing edge (mirrored via the #1271 verbs); defer/keep write a triage row to dream_conflicts (migration 048 columns). Default OFF behind DreamConfig.contradiction_reconcile_enabled. Pure planner span - zero LLM calls (the budget-gated judge runs at apply time). Attributes: op_id, namespace_id (span attr only, never a metric label per cardinality rule), phase=audit, similarity_threshold, total_relationships, live_relationships, finding_count, duration_ms."
+    },
+    {
+      "name": "khora.dream.vectorcypher.contradiction.judge",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Wraps each LLM judge call inside the two-LLM contradiction-reconcile judge on the apply path (#1281). Attributes: direction ('verifier'|'auditor', bounded), model (str), similarity (str), prompt_hash (bounded_text_hash - never raw prompt text), outcome ('parsed'|'parse_error'|'timeout'|'error'), decision ('invalidate'|'keep'|'defer'; only on 'parsed'), confidence (str; only on 'parsed'), error_type (str; only on 'timeout' / 'error'). Both judges must agree on 'invalidate' for the SAME loser, above the confidence floor, with a grounded citation, before the losing edge is soft-deleted; otherwise the pair defers (no mutation) and a triage row is written. LLM token spend is recorded via the acompletion wrapper (_telemetry_op='dream.contradiction.{direction}') and counted against the dream LLM budget."
+    },
+    {
+      "name": "khora.dream.vectorcypher.normalize_schema",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Inner span for the vectorcypher schema-drift normalization op (OpKind.VECTORCYPHER_NORMALIZE_SCHEMA, #673, Phase 5.4 of #649). Operator-driven rename of entity_type / relationship_type values per DreamConfig.normalize_schema_mapping; never auto-derives. Attributes: namespace_id (span attr only, never a metric label per cardinality rule), mapping_size (int, number of old_type -> new_type rules), entity_rename_count (int), relationship_rename_count (int). Apply path emits one MemoryEvent (ENTITY_UPDATED / RELATIONSHIP_UPDATED) per renamed row via coordinator.dispatch_hook. Type renames touch the consumer contract."
+    },
+    {
+      "name": "khora.dream.undo.write",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Wraps each fsync'd write of {run_id}.undo.json by DreamFileSink.write_undo_incremental (#667, Phase 4 of #649). Attributes: run_id (str), namespace_id (str - span attr only, never a metric label per cardinality rule), record_count (str). The orchestrator's apply-phase loop fires this after every committed op so a mid-run crash leaves a recoverable undo file on disk."
+    },
+    {
+      "name": "khora.dream.vectorcypher.dedupe.verifier",
+      "stability": "internal",
+      "owner": "dream",
+      "_comment": "Wraps each LLM judge call inside the borderline-merge two-LLM verifier on the vectorcypher dedupe apply path (#667, Phase 4.1 of #649). Attributes: direction ('verifier'|'auditor', bounded), model (str), similarity_score (str), prompt_hash (bounded_text_hash - never raw prompt text), outcome ('parsed'|'parse_error'|'timeout'|'error'), decision ('merge'|'keep_separate'|'defer'; only on 'parsed'), confidence (str; only on 'parsed'), error_type (str; only on 'timeout' / 'error'). Free-text rationale lives in the undo record JSON, never on a span. Verifier-deferred merges record decision='defer' in {run_id}.undo.json and do NOT mutate any DB row - kb.dream_undo on a deferred op is a no-op."
+    },
+    {
+      "name": "khora.integrations.hermes.initialize",
+      "stability": "internal",
+      "owner": "hermes",
+      "_comment": "Issue #628. One span per KhoraMemoryProvider.initialize() call."
+    },
+    {
+      "name": "khora.integrations.hermes.prefetch",
+      "stability": "internal",
+      "owner": "hermes",
+      "_comment": "Issue #628. Wraps the sync prefetch() entry point. Attrs: cache_hit, result_count, hermes.query_hash (bounded_text_hash)."
+    },
+    {
+      "name": "khora.integrations.hermes.sync_turn",
+      "stability": "internal",
+      "owner": "hermes",
+      "_comment": "Issue #628. Traces the enqueue step of sync_turn(); the actual remember I/O happens after the span closes."
+    },
+    {
+      "name": "khora.hooks.subscription.load",
+      "stability": "internal",
+      "owner": "khora",
+      "_comment": "Issue #599 Phase 3. Wraps the startup read of persistent hook subscriptions from khora_hook_subscriptions."
+    }
+  ],
+  "pipeline_stages": [
+    {
+      "name": "ingestion.chunking",
+      "stability": "internal"
+    },
+    {
+      "name": "ingestion.embedding",
+      "stability": "internal"
+    },
+    {
+      "name": "ingestion.extraction",
+      "stability": "internal"
+    },
+    {
+      "name": "ingestion.storage",
+      "stability": "internal"
+    },
+    {
+      "name": "ingestion.entity_storage",
+      "stability": "internal"
+    },
+    {
+      "name": "ingestion.entity_embedding",
+      "stability": "internal"
+    },
+    {
+      "name": "ingestion.smart_resolution",
+      "stability": "internal"
+    },
+    {
+      "name": "query.understanding",
+      "stability": "internal"
+    },
+    {
+      "name": "query.entity_linking",
+      "stability": "internal"
+    },
+    {
+      "name": "query.hyde",
+      "stability": "internal"
+    },
+    {
+      "name": "query.reranking",
+      "stability": "internal"
+    },
+    {
+      "name": "query.cache_lookup",
+      "stability": "internal"
+    },
+    {
+      "name": "query.search",
+      "stability": "internal"
+    },
+    {
+      "name": "query.fusion",
+      "stability": "internal"
+    },
+    {
+      "name": "query.keyword_search",
+      "stability": "internal"
+    },
+    {
+      "name": "query.multi_stage_1_recall",
+      "stability": "internal"
+    },
+    {
+      "name": "query.multi_stage_2_normalize",
+      "stability": "internal"
+    },
+    {
+      "name": "query.multi_stage_3_filter",
+      "stability": "internal"
+    },
+    {
+      "name": "query.multi_stage_4_rerank",
+      "stability": "internal"
+    },
+    {
+      "name": "query.multi_stage_5_diversity",
+      "stability": "internal"
+    },
+    {
+      "name": "expansion.cross_tool_unification",
+      "stability": "internal"
+    },
+    {
+      "name": "expansion.relationship_inference",
+      "stability": "internal"
+    }
+  ],
+  "metrics": [
+    {
+      "name": "khora.neo4j.pool.acquire_duration",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "s"
+    },
+    {
+      "name": "khora.neo4j.pool.acquisition_time",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "s"
+    },
+    {
+      "name": "khora.neo4j.session.duration",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "s"
+    },
+    {
+      "name": "khora.neo4j.pool.timeout",
+      "type": "counter",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.connections.active",
+      "type": "gauge",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.connections.idle",
+      "type": "gauge",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.connections.total",
+      "type": "gauge",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.connections.creating",
+      "type": "gauge",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.utilization",
+      "type": "gauge",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.sampled.active",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.sampled.idle",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.sampled.total",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.sampled.creating",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.sampled.utilization",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": ""
+    },
+    {
+      "name": "khora.neo4j.pool.keepalive.pings",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Keepalive RETURN 1 pings attempted on idle pooled connections. Incremented on every ping attempt by the opt-in keepalive loop (KHORA_STORAGE_GRAPH_POOL_KEEPALIVE_ENABLED); the per-cycle ping count tracks the observed idle-connection count, capped at 16. Zero when the keepalive is disabled."
+    },
+    {
+      "name": "khora.neo4j.pool.keepalive.failures",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Keepalive pings that raised an exception. A non-zero rate is expected and indicates the self-heal canary working: the ping hit a dead connection, whose teardown then runs to completion in the background and removes the stale connection from the pool. Not an error condition."
+    },
+    {
+      "name": "khora.neo4j.relationship.source_id_truncated",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "Provenance entries (source_document_ids / source_chunk_ids) dropped during a relationship MERGE because the (existing + incoming) union exceeded the configured cap. Counter value is the number of entries dropped, not rows affected. Raise the corresponding KHORA_STORAGE_GRAPH_RELATIONSHIP_SOURCE_*_MAX knob to retain deeper provenance. Issue #737.",
+      "labels": [
+        {"name": "field", "values": ["source_document_ids", "source_chunk_ids"], "_comment": "Which provenance list overflowed the cap."},
+        {"name": "kind", "values": ["batch", "single"], "_comment": "Whether the drop was observed by create_relationships_batch or create_relationship."}
+      ],
+      "_comment": "Issue #737. NO namespace_id label - cardinality rule. NO rel_type label (raw type strings are unbounded)."
+    },
+    {
+      "name": "khora.neo4j.entity.source_id_truncated",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "Provenance entries (source_document_ids / source_chunk_ids) dropped during an entity MERGE because the (existing + incoming) union exceeded the configured cap. Counter value is the number of entries dropped, not rows affected. Raise the corresponding KHORA_STORAGE_GRAPH_ENTITY_SOURCE_*_MAX knob to retain deeper provenance. Issue #777.",
+      "labels": [
+        {"name": "field", "values": ["source_document_ids", "source_chunk_ids"], "_comment": "Which provenance list overflowed the cap."},
+        {"name": "kind", "values": ["batch"], "_comment": "Entity upsert is batch-only; no single-entity merge path exists."}
+      ],
+      "_comment": "Issue #777. NO namespace_id label - cardinality rule. NO entity_type label (free-form strings are unbounded)."
+    },
+    {
+      "name": "khora.chronicle.abstention_signal",
+      "type": "counter",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.chronicle.abstention_combined_score",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "1"
+    },
+    {
+      "name": "khora.chronicle.reinforce.updates_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "chronicle",
+      "description": "Issue #855. Chronicle reinforcement-on-recall UPDATE batches that completed successfully. Each successful UPDATE of chunks.last_accessed_at after a recall increments this counter once per batch (not once per chunk). NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.chronicle.reinforce.failures_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "chronicle",
+      "description": "Issue #855. Chronicle reinforcement-on-recall UPDATE batches that raised an exception. The recall path swallows the error to avoid breaking the response; this counter is the only signal that reinforcement is silently failing."
+    },
+    {
+      "name": "khora.chronicle.reinforce.duration",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": "s",
+      "owner": "chronicle",
+      "description": "Issue #855. Chronicle reinforcement-on-recall task wall-clock duration from create_task schedule through UPDATE completion (or failure). Recorded in the task's finally block so both success and failure paths emit."
+    },
+    {
+      "name": "khora.chronicle.channel.degraded_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "chronicle",
+      "labels": [
+        {"name": "channel", "values": ["bm25", "semantic", "temporal", "entity", "temporal_channel", "doc_hydration", "cross_session"], "_comment": "Trailing token of the component name."},
+        {"name": "reason", "values": ["fulltext_backend_unavailable", "channel_exception", "events_query_failed", "cosine_batch_failed", "chunk_fetch_failed", "chunk_fallback_failed", "events_no_usable_signal", "projection_fetch_failed"], "_comment": "Low-cardinality enum; extend when adding new fallback paths."}
+      ],
+      "description": "Issues #901, #906. Chronicle retrieval channel degradations recorded under ADR-001 (silent-failure observability). Incremented once per channel-failure or silent-fallback site in chronicle.recall(). The same event is also appended to RecallResult.engine_info['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.chronicle.extraction.failed_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "chronicle",
+      "labels": [
+        {"name": "kind", "values": ["events", "facts"], "_comment": "Which chronicle extractor failed."},
+        {"name": "reason", "values": ["llm_transient_failure"], "_comment": "Low-cardinality enum; extend if a non-LLM failure mode is observed."}
+      ],
+      "description": "Issue #903 (ADR-001). Chronicle event / fact extraction LLM calls that raised a transient error (rate limit, timeout, connection error, JSON parse error). The extractor returns [] and an ErrorRecord is appended to RememberResult.metadata['errors']. Real parser bugs (AttributeError, KeyError) propagate and do NOT increment this counter. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.stats.counter_failed_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "engines",
+      "labels": [
+        {"name": "engine", "values": ["vectorcypher", "chronicle", "skeleton"], "_comment": "Which engine's stats() the failing counter belongs to."},
+        {"name": "counter", "values": ["chunks", "entities", "relationships"], "_comment": "Which count_* counter could not run."}
+      ],
+      "description": "Issue #878 (ADR-001). A stats() counter (count_chunks / count_entities / count_relationships) could not run because the routed backend lacks the method or it raised. The int field stays 0 and an ErrorRecord is appended to Stats.metadata['errors'] so 'couldn't count' is distinguishable from 'counted zero'. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.rel_fetch.degraded_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["fetch_failed"], "_comment": "Low-cardinality enum; extend when adding new relationship-fetch fallback paths."}
+      ],
+      "description": "Issue #904 (ADR-001). VectorCypher relationship-fetch silent fallback - incremented when the parallel rels_task raises and the retrieve path continues without relationships. The same event is also appended to RecallResult.engine_info['degradations']. Asymmetric prior art: _cypher_expand failure already sets engine_info['graph_fallback'] / 'graph_error'; this counter closes the rel-fetch gap. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.version_filter.degraded_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["embedded_no_version_columns"], "_comment": "Low-cardinality enum; extend when adding new version-filter fallback paths."}
+      ],
+      "description": "VectorCypher entity-version filtering fallback - incremented when an EXPLICIT/occurred-bounds recall runs on the embedded sqlite_lance backend, which lacks the version_valid_from/to columns _version_filter_entities reads, so point-in-time entity-version narrowing is skipped. The occurred-bounds chunk filter (start_time/end_time) still applies on the vector + BM25 channels. The same event is also appended to RecallResult.engine_info['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.cypher_expand.degraded_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["unrecognized_neighborhood_shape"], "_comment": "Low-cardinality enum; extend when adding new cypher-expand normalization fallback paths."}
+      ],
+      "description": "VectorCypher graph-expansion normalization fallback - incremented per neighborhood entry returned by get_neighborhoods_batch whose shape is unrecognized (neither an Entity domain object nor a dict) and is therefore dropped from the expansion. The same event is also appended to RecallResult.engine_info['degradations']. No namespace_id label."
+    },
+    {
+      "name": "khora.vectorcypher.temporal_semantic_fallback.degraded_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["llm_failed"], "_comment": "Low-cardinality enum; extend when adding new Tier-2 temporal-fallback failure modes."}
+      ],
+      "description": "Issue #981 (ADR-001). Tier-2 LLM temporal-category fallback failure - incremented when the opt-in semantic fallback (KHORA_QUERY_TEMPORAL_SEMANTIC_FALLBACK_ENABLED) is consulted for a query the English keyword tier classified as NONE and the LLM call raises or times out. The detector keeps the keyword (NONE) result and the same event is appended to RecallResult.engine_info['degradations']. Default OFF - zero cost when disabled. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.community_projection.degraded_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["fetch_failed"], "_comment": "Low-cardinality enum; extend when adding new community-projection fallback paths."}
+      ],
+      "description": "Issue #1308 (ADR-001). VectorCypher community-projection fallback - incremented when the get_entity_communities reader raises while projecting materialized dream communities (#1276) onto a recall result, so recall continues with no community context (RecallResult.communities stays empty). The same event is also appended to RecallResult.engine_info['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.entity_vector_search.degraded_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["channel_exception"], "_comment": "Low-cardinality enum; extend when adding new entry-entity search fallback paths."}
+      ],
+      "description": "Issue #1158 (ADR-001). VectorCypher entry-entity vector-search silent fallback - incremented when _vector_search_entities catches an exception from search_similar_entities and returns [], collapsing the graph-expansion channel of GRAPH/HYBRID recall to vector-only. The same event is also appended to RecallResult.engine_info['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.bm25.degraded_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["channel_exception", "empty_multitoken_channel"], "_comment": "Low-cardinality enum; extend when adding new BM25 channel fallback paths. empty_multitoken_channel (#1330): a >=2-token keyword query matched 0 rows, dropping the lexical channel without raising."}
+      ],
+      "description": "Issue #1158 (ADR-001). VectorCypher BM25 channel silent fallback - incremented when _bm25_search_chunks catches an exception (reason=channel_exception) or when a >=2-token keyword query returns 0 rows (reason=empty_multitoken_channel, #1330), dropping the independent lexical channel from RRF fusion. The same event is also appended to RecallResult.engine_info['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.recency_channel.degraded_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "reason", "values": ["channel_exception"], "_comment": "Low-cardinality enum; extend when adding new recency channel fallback paths."}
+      ],
+      "description": "ADR-001. VectorCypher recency channel silent fallback - incremented when _recency_channel_chunks catches an operational fault from search_recent_chunks and returns [], dropping the recency pool-augmentation contribution from RRF fusion. A RecallFilterUnsupportedError is NOT counted here - it propagates (fail-loud). The same event is also appended to RecallResult.engine_info['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.query.hyde.degraded_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "query",
+      "labels": [
+        {"name": "channel", "values": ["query_embedding"], "_comment": "Which HyDE channel degraded; query_embedding = the embedding-averaging expansion path."},
+        {"name": "reason", "values": ["hyde_embedding_failed"], "_comment": "Low-cardinality enum; extend when adding new HyDE fallback paths."}
+      ],
+      "description": "Issue #1324 (ADR-001). HyDE query-embedding expansion silent fallback - incremented when expand_query_embedding catches any exception (LLM call failure, embed failure) and returns the original embedding unchanged. The same event is also appended to the caller-supplied out_diagnostics list, surfacing on RecallResult.engine_info['degradations'] or QueryResult.metadata['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.vectorcypher.chunk_mirror.degraded_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "labels": [
+        {"name": "channel", "values": ["graph"], "_comment": "Which mirror channel degraded; graph = Neo4j Chunk-node mirror."},
+        {"name": "reason", "values": ["neo4j_write_failed"], "_comment": "Low-cardinality enum; extend when adding new chunk-mirror fallback paths."}
+      ],
+      "description": "ADR-001. VectorCypher Neo4j chunk-mirror silent fallback - incremented when a Chunk-node mirror write to Neo4j raises (create, replace, or batch ingest path) and ingest continues with chunks persisted only in pgvector. The same event is also appended to RememberResult.metadata['degradations'] where a diagnostics sink exists. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.forget.cascade.degraded_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "engines",
+      "labels": [
+        {"name": "reason", "values": ["no_store_with_primitives", "memory_facts_cleanup_failed", "malformed_relationship_swept"], "_comment": "Low-cardinality enum; extend when adding new forget-cascade fallback paths."}
+      ],
+      "description": "Issue #923 (ADR-001). Forget-cascade cleanup degradations. reason=no_store_with_primitives: entity/relationship cleanup could not run because no configured store (vector or graph) exposes the list/delete primitives; a Degradation is returned from _cascade_forget_extraction. reason=memory_facts_cleanup_failed (#1140): chronicle could not delete the memory_facts derived from the forgotten document's chunks. reason=malformed_relationship_swept (#1237): orphan relationship(s) whose endpoint node was missing its id (so list_relationships could not deserialize them) were force-deleted via direct Cypher; the count is the number swept. The forget still deletes the document + chunks. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.ingest.relationships_skipped_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "pipelines.ingest",
+      "labels": [
+        {"name": "reason", "values": ["unremappable"], "_comment": "Why the relationship was dropped. Low-cardinality enum."}
+      ],
+      "description": "Issue #907 (ADR-001). Number of relationships dropped by the shared ingest pipeline because the source / target entity id could not be remapped to a canonical entity (LLM-extracted endpoint not in the upsert batch and no (name, type) match in the namespace). Surfaced on RememberResult.relationships_skipped and as a Degradation entry under RememberResult.metadata['degradations']. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.telemetry.flush.dropped_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "telemetry",
+      "description": "Issue #924. Number of buffered telemetry events dropped because the in-memory buffer hit max_buffer_size (default 10000) while re-queuing a batch that failed to flush to the telemetry database. A failed flush re-enqueues its drained events for the next tick; only sustained DB-write failure (which fills the buffer) drops the oldest events, with a WARN. Zero unless DB telemetry is enabled AND flushes are persistently failing. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.chronicle.reconcile.failures_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "chronicle",
+      "description": "Issue #892. MemoryCompressor.reconcile_fact() calls where the contradiction-check LLM call raised a transient error (rate limit, timeout, connection error, JSON parse error). The fact is skipped (NOT added) to prevent silent contradiction accumulation - previously the broad except Exception silently fell back to ADD on every LLM error, breaking fact supersession integrity. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.vectorcypher.abstention_signal",
+      "type": "counter",
+      "stability": "public",
+      "unit": ""
+    },
+    {
+      "name": "khora.vectorcypher.abstention_combined_score",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "1"
+    },
+    {
+      "name": "khora.vectorcypher.llm_reranking.skipped_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "vectorcypher",
+      "description": "Number of times the VectorCypher LLM rerank step was skipped, by reason. Surfaces the discoverability bug from issue #814 - when enable_llm_reranking=True but the gate fires, this counter increments so operators can see the skip without scraping DEBUG logs.",
+      "labels": [
+        {"name": "reason", "values": ["not_temporal", "no_version_metadata", "decisive_winner"]}
+      ],
+      "_comment": "Issue #814. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.memory.recall.duration",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "s"
+    },
+    {
+      "name": "khora.memory.ingest.duration",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "s"
+    },
+    {
+      "name": "khora.llm.tokens",
+      "type": "counter",
+      "stability": "public",
+      "unit": "tokens"
+    },
+    {
+      "name": "khora.llm.cost_usd",
+      "type": "counter",
+      "stability": "public",
+      "unit": "USD"
+    },
+    {
+      "name": "khora.log.queue.depth",
+      "type": "gauge",
+      "stability": "public",
+      "unit": "records"
+    },
+    {
+      "name": "khora.query.temporal.floor_applied_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Number of times a synthetic RECENCY/CHANGE temporal filter was applied to a query.",
+      "labels": [
+        {"name": "category", "values": ["none", "explicit", "state_query", "ordinal", "aggregate", "recency", "change"], "_comment": "TemporalCategory enum value."},
+        {"name": "vetoed", "values": ["true", "false"], "_comment": "True when an anti-recency token suppressed the floor."}
+      ],
+      "_comment": "Issue #567 Phase A. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.query.temporal.recency_channel_fired_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Number of times the parallel recency channel was queried.",
+      "labels": [
+        {"name": "category", "values": ["none", "explicit", "state_query", "ordinal", "aggregate", "recency", "change"], "_comment": "TemporalCategory enum value."}
+      ],
+      "_comment": "Issue #567 Phase A. NO namespace_id label."
+    },
+    {
+      "name": "khora.recall.recency.query_to_top1_age_days",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": "d",
+      "description": "Age in days of the top-1 chunk in a recall result.",
+      "histogram_buckets": [0, 1, 7, 30, 90, 365, 3650],
+      "labels": [],
+      "_comment": "Issue #567 Phase A. Log-bucketed: hour-day-week-month-quarter-year-decade. No labels - global recency-skew signal."
+    },
+    {
+      "name": "khora.recall.dangling_ref",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Recall referenced a document_id the relational store could not resolve (deleted, namespace mismatch, or replication lag). Counted by referrer kind.",
+      "labels": [
+        {"name": "referrer", "values": ["chunk", "entity", "relationship"], "_comment": "Which part of the RecallResult held the dangling reference."}
+      ],
+      "_comment": "NO namespace_id label - cardinality rule (CLAUDE.md). namespace_id lives on the surrounding span and debug log."
+    },
+    {
+      "name": "khora.ingest.source_timestamp.fallback_count",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Number of chunks whose occurred_at fell back to ingest time because the connector did not populate metadata.custom with a timestamp field. Labels: source_type (bounded enum).",
+      "labels": [
+        {"name": "source_type", "values": ["slack", "email", "calendar", "salesforce", "jira", "linear", "manual", "unknown"], "_comment": "Bounded enum drawn from SourceSystem; off-enum values bucket to 'unknown'."}
+      ],
+      "_comment": "Issue #568 Phase B. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hooks.llm.evaluations_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Level 2 (nano-LLM yes/no) hook filter evaluations, bucketed by outcome.",
+      "labels": [
+        {"name": "category", "values": ["match", "no_match", "timeout", "budget_exceeded"], "_comment": "match/no_match = LLM decided; timeout = LLM raised or response unparseable; budget_exceeded = per-namespace cap hit, evaluator failed open."}
+      ],
+      "_comment": "Issue #576 Phase 1, Item 7. NO namespace_id label - cardinality rule. Default-off feature; counter only fires when KHORA_HOOKS_LLM_EVALUATION_ENABLED=true."
+    },
+    {
+      "name": "khora.hooks.llm.tokens_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "tokens",
+      "description": "Approximate token spend for Level 2 hook evaluations, by direction. Char/4 estimate - the canonical token count lives on khora.llm.tokens via the central LLMUsage path.",
+      "labels": [
+        {"name": "direction", "values": ["input", "output"]}
+      ],
+      "_comment": "Issue #576 Phase 1, Item 7. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hooks.llm.throttled_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Number of Level 2 hook evaluations refused by either the per-namespace or per-subscription hourly token budget. Each throttle event corresponds to a fail-open outcome on the affected batch.",
+      "labels": [],
+      "_comment": "Issue #576 Phase 1, Item 7. Extended in #601 with the per-subscription budget. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hooks.llm.cache_hits_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Level 2 hook evaluations short-circuited by the (filter, event_summary_hash) cache.",
+      "labels": [
+        {"name": "category", "values": ["match", "no_match"], "_comment": "Decision served from cache."}
+      ],
+      "_comment": "Issue #601. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hooks.llm.cache_misses_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Level 2 hook evaluations that fell through the cache and required (or queued) an LLM call.",
+      "labels": [],
+      "_comment": "Issue #601. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.runs_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "Dream runs completed, bucketed by trigger + outcome.",
+      "labels": [
+        {"name": "trigger", "values": ["manual", "scheduled", "api"], "_comment": "Operator-supplied trigger label; bounded enum."},
+        {"name": "outcome", "values": ["completed", "failed"]}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.run.duration",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "s",
+      "description": "End-to-end dream run duration in seconds.",
+      "labels": [
+        {"name": "trigger", "values": ["manual", "scheduled", "api"]},
+        {"name": "outcome", "values": ["completed", "failed"]}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.phase.duration",
+      "type": "histogram",
+      "stability": "public",
+      "unit": "s",
+      "description": "Per-phase duration inside a dream run.",
+      "labels": [
+        {"name": "phase", "_comment": "Bounded enum of dream phases (audit / mutation / ...)."},
+        {"name": "outcome", "values": ["success", "skipped", "failed"]}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.ops_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "Dream ops decided, by phase / op_type / decision.",
+      "labels": [
+        {"name": "phase"},
+        {"name": "op_type", "_comment": "Bounded by OpKind plus future additions."},
+        {"name": "decision", "_comment": "Bounded enum decision string."}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.op.duration",
+      "type": "histogram",
+      "stability": "internal",
+      "unit": "s",
+      "description": "Per-op duration. Internal - phase-level histogram is the public surface.",
+      "labels": [
+        {"name": "phase"},
+        {"name": "op_type"}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.llm.tokens",
+      "type": "counter",
+      "stability": "public",
+      "unit": "tokens",
+      "description": "LLM tokens spent inside a dream run, by direction + model. Distinct from khora.llm.tokens so dream cost can be sliced separately.",
+      "labels": [
+        {"name": "direction", "values": ["prompt", "completion"]},
+        {"name": "model", "_comment": "LLM model id (e.g. 'gpt-4o-mini')."}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.llm.throttled_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Dream LLM-using ops skipped because the per-run or per-namespace-per-day token budget was exhausted. Each increment corresponds to one op that was not dispatched to the LLM; already-applied ops in the same run stay committed.",
+      "labels": [],
+      "_comment": "Issue #1270. NO namespace_id label - cardinality rule. Default budgets live on DreamConfig.llm_max_tokens_per_run / llm_max_tokens_per_namespace_per_day; 0 disables a budget."
+    },
+    {
+      "name": "khora.dream.graph_mirror.partial_failure",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Dream apply committed on PostgreSQL but the post-commit Neo4j tombstone-mirror raised. PG is the source of truth; the op is queued in khora_dream_runs.graph_mirror_pending and re-attempted by the reconciler on the next run. Operators monitor this to detect cross-store divergence between PG and the graph backend.",
+      "labels": [],
+      "_comment": "Issue #1272 (#970 DoD). NO namespace_id label - cardinality rule. Incremented on the post-commit mirror failure AND on each reconcile re-attempt that still fails. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.dream.contradiction.reconcile_deferred_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Contradiction pairs the two-LLM reconcile judge did NOT invalidate (disagreement, timeout, below-confidence, ungrounded citation, or a judged keep). No relationship was mutated; a triage row was written to dream_conflicts. Operators monitor this to gauge reconcile coverage and judge-agreement rate.",
+      "labels": [],
+      "_comment": "Issue #1281 (dream-on-graph Phase 5). NO namespace_id label - cardinality rule. Incremented once per flagged pair the judge declined to invalidate. The op is OFF by default behind DreamConfig.contradiction_reconcile_enabled."
+    },
+    {
+      "name": "khora.dream.graph_unmirror.partial_failure",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "dream_undo reverted the PostgreSQL soft-deletes but the post-commit graph-side reverse mirror (un-retire entities / un-invalidate relationships / restore endpoints) raised or the namespace resolve failed. PG is undone while the graph keeps the merged shape - a half-revert. Operators monitor this to detect cross-store divergence introduced by an undo.",
+      "labels": [],
+      "_comment": "Issue #1275 (dream-on-graph Phase 3). NO namespace_id label - cardinality rule. Incremented when the reverse graph verbs raise after the PG reverse committed, or when the namespace cannot be resolved for the reverse. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.dream.undo_invocations_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "Number of UndoHandle invocations, by op_type + outcome.",
+      "labels": [
+        {"name": "op_type"},
+        {"name": "outcome", "values": ["applied", "skipped", "failed"]}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.subscription.overflow_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Dream event-sink outbox drops (queue full, drop_oldest policy).",
+      "labels": [
+        {"name": "subscription_class"}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.dream.report.write_failures_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "File-sink writes that failed (open / write / rename / manifest / summary / undo).",
+      "labels": [
+        {"name": "reason", "values": ["open", "io_error", "rename", "manifest", "summary", "undo", "no_open_run"]}
+      ],
+      "_comment": "Issue #666. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hermes.remember.success_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "remember / remember_batch tasks completed without raising inside the Hermes adapter's per-session FIFO executor.",
+      "labels": [
+        {"name": "op", "values": ["remember", "remember_batch"], "_comment": "Which Khora write API the task wrapped."}
+      ],
+      "_comment": "Issue #628. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hermes.remember.failed_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "remember / remember_batch tasks that raised inside the Hermes adapter's per-session FIFO executor. Feeds KhoraMemoryProvider's failure-rate gauge.",
+      "labels": [
+        {"name": "op", "values": ["remember", "remember_batch"], "_comment": "Which Khora write API the task wrapped."}
+      ],
+      "_comment": "Issue #628. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hermes.queue.shed_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "Pending writes dropped because the per-session FIFO queue was at queue_max_size. Sustained shedding signals ingest throughput cannot keep up with conversation rate.",
+      "labels": [
+        {"name": "op", "values": ["remember", "remember_batch", "recall"], "_comment": "Which task type was shed."}
+      ],
+      "_comment": "Issue #628. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hermes.tool_call_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "description": "Tool calls dispatched through KhoraMemoryProvider.handle_tool_call. The 'unknown' label fires when Hermes invokes a tool name we don't recognise (defensive).",
+      "labels": [
+        {"name": "tool", "values": ["memory_search", "memory_recall", "unknown"], "_comment": "Which tool the LLM called."}
+      ],
+      "_comment": "Issue #628. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.storage.upsert_entities_batch.partial_failure",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Vector commit succeeded but the graph upsert raised. Vector rows are reconciled by the next upsert MERGE; operators monitor this counter to detect graph-side dropouts.",
+      "_comment": "Issue #868. Vector-first ordering in StorageCoordinator.upsert_entities_batch. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.storage.create_entity.partial_failure",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Vector commit succeeded but the graph create_entity raised. The vector row is reconciled by the next upsert MERGE; operators monitor this counter to detect graph-side dropouts on the single-entity create path.",
+      "_comment": "Issue #1138. Vector-first ordering in StorageCoordinator.create_entity (mirrors #868). NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.storage.update_entity.partial_failure",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "Vector commit succeeded but the graph update_entity raised. The vector row is reconciled by the next upsert MERGE; operators monitor this counter to detect graph-side dropouts on the single-entity update path.",
+      "_comment": "Issue #1138. Vector-first ordering in StorageCoordinator.update_entity (mirrors #868). NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.extraction.errors_total",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "extraction",
+      "labels": [
+        {"name": "reason", "values": ["extraction_failed"], "_comment": "Low-cardinality enum; extend when adding new failure categories. ``extraction_failed`` covers truncated LLM responses, parse failures, and retry exhaustion - the per-chunk reason lives on the ADR-001 degradation entry in RememberResult.metadata['degradations']."}
+      ],
+      "description": "Issue #889. LLM extraction failures per chunk: incremented once per chunk where ``LLMEntityExtractor`` returned an ``ExtractionResult`` with an ``error`` metadata key (truncated response, parse error, retry exhaustion). The same event is also appended to ``RememberResult.metadata['degradations']`` as an ADR-001 ``Degradation`` entry with ``component='extraction.llm'``. NO namespace_id label - cardinality rule. See docs/architecture/failure-observability-contract.md."
+    },
+    {
+      "name": "khora.storage.replace_document.partial_failure",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "description": "PG transaction committed (chunks + COMPLETED status stamp) but the post-commit graph-mirror phase of StorageCoordinator.replace_document_extraction raised. The graph backend is in a partial-mirror state; the next successful replace for the same external_id heals via MERGE / retire. Caller surfaces a degradation on RememberResult.metadata so downstream consumers can act on the divergence.",
+      "_comment": "Issue #884. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.documents.orphans_reclaimed_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "labels": [
+        {
+          "name": "prior_status",
+          "values": [
+            "pending",
+            "processing"
+          ],
+          "_comment": "Status the reclaimed document held before the claim flipped it to processing. Low-cardinality enum."
+        }
+      ],
+      "description": "Issues #885, #886. Stale orphaned documents reclaimed by the pending processor's crash-recovery scan (Khora._enqueue_orphaned_pending_docs). A 'pending' prior status is a doc that was never picked up; 'processing' is a doc left behind by a crashed worker. Claims are atomic via StorageCoordinator.claim_orphaned_documents (FOR UPDATE SKIP LOCKED on PostgreSQL). NO namespace_id label - cardinality rule.",
+      "_comment": "Issues #885, #886. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.documents.processor.degraded_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "labels": [
+        {
+          "name": "reason",
+          "values": [
+            "document_missing_at_dequeue"
+          ],
+          "_comment": "Why the queued document could not be processed. Low-cardinality enum."
+        }
+      ],
+      "description": "Issue #932. A queued document identity could not be re-loaded at dequeue time because the row was deleted/forgotten between enqueue and dequeue. The pending processor carries lean items (doc_id + namespace_id) and re-loads the full Document in the worker; when the loader returns None the item is skipped per ADR-001 (logged INFO, batch registration decremented so BatchHandle.wait can't hang). NO namespace_id label - cardinality rule.",
+      "_comment": "Issue #932. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.recall.filter.under_filled",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "filter",
+      "description": "Filtered recalls that returned fewer results than the requested limit (the deterministic recall filter narrowed the candidate set below the requested k). NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.recall.filter.graph_channel_empty",
+      "type": "counter",
+      "stability": "public",
+      "unit": "1",
+      "owner": "filter",
+      "description": "Filtered recalls whose graph channel returned no candidates because the deterministic recall filter narrowed the graph side to empty. NO namespace_id label - cardinality rule."
+    },
+    {
+      "name": "khora.hooks.subscription.persistent_count",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "khora",
+      "description": "Persistent hook subscriptions loaded from storage on startup. Incremented by the count loaded in HookDispatcher.load_persistent(). NO namespace_id label - cardinality rule.",
+      "_comment": "Issue #599 Phase 3."
+    },
+    {
+      "name": "khora.hooks.subscription.persist_degraded_total",
+      "type": "counter",
+      "stability": "internal",
+      "unit": "1",
+      "owner": "khora",
+      "labels": [
+        {
+          "name": "channel",
+          "values": ["subscription_store"],
+          "_comment": "ADR-001 component channel. Stable single value today; the only durable-subscription store path."
+        },
+        {
+          "name": "reason",
+          "values": ["persist_failed", "load_failed", "delete_failed"],
+          "_comment": "persist_failed = register-time INSERT raised (kept in memory, loses durability); load_failed = startup load_all() raised (zero loaded); delete_failed = unregister DELETE raised (row lingers and resurrects on next load)."
+        }
+      ],
+      "description": "Persistent hook-subscription store operations that degraded under ADR-001 (register kept in memory after a write failure, startup load returned zero, or unregister left a lingering row). NO namespace_id label - cardinality rule.",
+      "_comment": "Issue #599 Phase 3."
+    }
+  ]
+}

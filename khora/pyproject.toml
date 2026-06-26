@@ -1,0 +1,418 @@
+[project]
+name = "khora"
+dynamic = ["version", "readme"]
+description = "A Python library for creating knowledge repositories that ingest unstructured and structured multi-source data and expose a single query substrate, built for integrating into long-horizon AI agents"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [
+    { name = "AllTheData Inc." }
+]
+requires-python = ">=3.13"
+dependencies = [
+    # Configuration. Lower bound is the minimum CrewAI (>=1.10) tolerates;
+    # khora itself uses only the stable ``BaseSettings`` / ``SettingsConfigDict``
+    # surface, so a broader range is safe for callers that want to install
+    # ``khora[crewai]`` alongside the base.
+    "pydantic-settings>=2.10.1,<3",
+    "pyyaml>=6.0.3",
+    "jinja2>=3.1.6",
+    # Async support
+    "asyncpg>=0.31.0",
+    # Database
+    "sqlalchemy[asyncio]>=2.0.49",
+    "alembic>=1.18.4",
+    "loguru>=0.7.3",
+    # LLM Access (unified interface)
+    "litellm>=1.84.0",
+    # Graph database
+    "neo4j>=6.2.0",
+    # Vector database
+    "pgvector>=0.4.2",
+    # Token counting
+    "tiktoken>=0.12.0",
+    # Neural reranking
+    "sentence-transformers>=5.4.1",
+    # Retry logic
+    "tenacity>=9.1.4",
+    # Temporal date parsing
+    "dateparser>=1.4.0",
+    # OpenTelemetry API (small wheel, no SDK). khora emits spans/metrics
+    # via this API unconditionally; export only happens when a real
+    # TracerProvider/MeterProvider is installed (see khora[otel] /
+    # khora[logfire]).
+    "opentelemetry-api>=1.34.1",
+    # Numerical arrays. Hard-required on the eager ``import khora`` path
+    # (hooks/embedding_filter.py imports numpy unconditionally) but until
+    # now only pulled in transitively via sentence-transformers -> torch ->
+    # numpy. Declare it directly so ``import khora`` stays self-sufficient.
+    "numpy>=2.1",
+]
+
+# Entry-point group used by khora.integrations.registry.discover().
+# First-party adapters (CrewAI, LangGraph, ...) register themselves here
+# when their tickets merge. Third parties publish khora-<framework>
+# distributions that register under the same group — same import path.
+[project.entry-points."khora.integrations"]
+crewai = "khora.integrations.crewai:KhoraMemory"
+langgraph = "khora.integrations.langgraph:KhoraStore"
+google_adk = "khora.integrations.google_adk:KhoraMemoryService"
+openai_agents = "khora.integrations.openai_agents:KhoraSession"
+llamaindex = "khora.integrations.llamaindex:KhoraRetriever"
+hermes = "khora.integrations.hermes:KhoraMemoryProvider"
+
+[project.urls]
+Homepage = "https://github.com/DeytaHQ/khora"
+Documentation = "https://github.com/DeytaHQ/khora/blob/main/docs/README.md"
+Repository = "https://github.com/DeytaHQ/khora"
+Issues = "https://github.com/DeytaHQ/khora/issues"
+Changelog = "https://github.com/DeytaHQ/khora/blob/main/CHANGELOG.md"
+Releases = "https://github.com/DeytaHQ/khora/releases"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
+    "pytest-timeout>=2.3.0",
+    "coverage>=7.13.5",
+    "ruff~=0.15.12",
+    "prek>=0.3.13",
+    "ty>=0.0.34",
+    "hypothesis>=6.152.4",
+]
+# Data storage backends
+postgres = [
+    "asyncpg>=0.31.0",
+    "pgvector>=0.4.2",
+]
+# Graph backends
+neo4j = ["neo4j>=6.2.0"]
+memgraph = ["neo4j>=6.2.0"]  # Memgraph uses bolt protocol via neo4j driver
+neptune = ["neo4j>=6.2.0"]  # Neptune uses Bolt protocol via neo4j driver
+neptune-iam = ["neo4j>=6.2.0", "boto3>=1.35.0"]  # With IAM auth support
+age = ["asyncpg>=0.31.0"]  # AGE uses PostgreSQL via asyncpg
+# All graph backends (currently just neo4j; legacy graph-all transitional pin
+# kept for installers that referenced it).
+graph-all = ["neo4j>=6.2.0"]
+# Weaviate vector database
+weaviate = ["weaviate-client>=4.21.0"]
+# turbopuffer serverless vector + BM25 store (skeleton-engine opt-in,
+# #824 - YELLOW verdict: clean SDK + filters, SaaS-only, client-side
+# RRF for hybrid). Pinned to 2.x (current).
+turbopuffer = ["turbopuffer>=2.1.0,<3.0"]
+# All backends
+all-backends = [
+    "neo4j>=6.2.0",
+    "asyncpg>=0.31.0",
+    "pgvector>=0.4.2",
+    "httpx>=0.28.1",
+    "weaviate-client>=4.21.0",
+    "surrealdb>=2.0.0,<3.0",
+    "aiosqlite>=0.21.0",
+    "lancedb>=0.30.0",
+    "pyarrow>=24.0.0",
+]
+# Neural reranking
+reranking = []
+# Binary file readers (Excel, Word text extraction) — used by khora-cli
+binary-readers = ["openpyxl>=3.1.0", "python-docx>=1.2.0"]
+# Parquet file support (used by khora-cli)
+parquet = ["pyarrow>=24.0.0"]
+# Accelerated CPU operations (numpy for cosine sim, rapidfuzz for string matching)
+accel = [
+    "rapidfuzz>=3.0.0",
+]
+# Observability
+# Vanilla OpenTelemetry SDK + HTTP/Protobuf OTLP exporter. Use this
+# when shipping to any OTel-compatible collector or vendor (Tempo,
+# Jaeger, Honeycomb, Datadog, New Relic, Dynatrace, etc.).
+otel = [
+    "opentelemetry-sdk>=1.34.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.34.1",
+]
+# Optional gRPC transport for OTLP. Pulls in grpcio (~30MB native
+# binary); HTTP is the default and sufficient for most setups.
+otel-grpc = [
+    "khora[otel]",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.34.1",
+]
+# Logfire (Pydantic) — a managed OTel backend with auto-bootstrap.
+# Installs its own TracerProvider/MeterProvider on logfire.configure().
+logfire = ["logfire>=4.6.0"]
+# NLP tools
+nlp = ["spacy>=3.8.0"]
+# Rust-accelerated operations (requires Rust toolchain to build from source).
+# LOCKSTEP: this pin must match rust/khora-accel/Cargo.toml's version exactly.
+# Bump both in the same PR. See CLAUDE.md → Version Bumps.
+rust = [
+    "khora-accel==0.21.0",
+]
+# SurrealDB unified backend (graph + vector + relational in one DB)
+surrealdb = ["surrealdb>=2.0.0,<3.0"]
+# Zero-infrastructure embedded stack — alias for `sqlite-lance` (SQLite + LanceDB).
+embedded = ["khora[sqlite-lance]"]
+# SQLite embedded backend (zero-infrastructure relational + vector)
+sqlite = ["aiosqlite>=0.21.0"]
+# LanceDB embedded vector store (Chronicle engine, zero-infrastructure)
+lancedb = ["lancedb>=0.30.0", "pyarrow>=24.0.0"]
+# SQLite + LanceDB embedded backend (relational via aiosqlite + vector via LanceDB)
+sqlite-lance = ["lancedb>=0.30.0", "aiosqlite>=0.21.0", "pyarrow>=24.0.0"]
+# CrewAI memory adapter — see docs/integrations/crewai.md
+crewai = ["crewai>=1.10,<2.0"]
+# LangGraph BaseStore adapter (semantic long-term memory).
+# See docs/integrations/langgraph.md and src/khora/integrations/langgraph/.
+langgraph = ["langgraph>=1.0,<2.0"]
+# Google ADK BaseMemoryService adapter.
+# Upper bound excludes the 2.x beta — ADK 2.0 is still in pre-release.
+# Bump to <3.0 after the 2.x line GAs and adapter smoke passes against it.
+# See docs/integrations/google_adk.md.
+google-adk = ["google-adk>=1.32,<2.0"]
+# OpenAI Agents SDK adapter (KhoraSession + khora_recall_tool + KhoraMemoryHooks).
+# Pinned tight (single upstream minor): the SDK is pre-1.0 with 17 releases in
+# 7 months as of v0.17. Bump in a deliberate PR per upstream minor — see
+# docs/integrations/openai_agents.md.
+openai-agents = ["openai-agents>=0.17,<0.18"]
+# LlamaIndex adapter — BaseRetriever, BaseMemoryBlock, and a deprecated
+# BaseChatStore shim. See docs/integrations/llamaindex.md and
+# src/khora/integrations/llamaindex/. The pin is intentionally narrow
+# (one minor) because LlamaIndex has shipped breaking changes on minor
+# bumps before (BaseMemoryBlock 0.11 → 0.12 → 0.14, BaseMemory.put →
+# aput). Quarterly maintenance reserved for the next minor bump.
+llamaindex = ["llama-index-core>=0.14,<0.15"]
+# Hermes memory provider — see docs/integrations/hermes.md.
+#
+# Intentionally NOT declared as a runtime extra: hermes-agent==0.13.0
+# exact-pins requests==2.33.0, which conflicts with khora's CVE-2026-25645
+# constraint (``constraint-dependencies = ["requests>=2.33.1"]``).
+# Users opt in manually with ``pip install hermes-agent`` alongside khora;
+# the adapter still resolves at import time via the
+# ``[project.entry-points."khora.integrations"]`` declaration above.
+# Revisit when hermes-agent loosens its requests pin — tracked in a
+# follow-up issue noted in CHANGELOG.
+
+[build-system]
+requires = ["hatchling", "hatch-vcs", "hatch-fancy-pypi-readme"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options.local_scheme = "no-local-version"
+
+# README rewriting for PyPI. README.md on disk uses relative links
+# (``docs/configuration.md``) which work on GitHub but break on PyPI,
+# whose project page renders relative paths against
+# ``https://pypi.org/project/khora/``. The substitution rewrites them
+# to absolute GitHub URLs at build time so the published wheel/sdist
+# carry working links without uglifying the on-disk README.
+[tool.hatch.metadata.hooks.fancy-pypi-readme]
+content-type = "text/markdown"
+
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.fragments]]
+path = "README.md"
+
+# Match Markdown links whose target is not already absolute (http/https)
+# nor an in-page anchor (#section). Captures docs/configuration.md,
+# LICENSE, NOTICE, CHANGELOG.md, etc. Rewrites to blob/main/<path>.
+[[tool.hatch.metadata.hooks.fancy-pypi-readme.substitutions]]
+pattern = '\]\((?!https?:|#|mailto:)([^)]+)\)'
+replacement = '](https://github.com/DeytaHQ/khora/blob/main/\1)'
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/khora"]
+
+# Sdist excludes dev-only tree.  ``.claude/docs/workflow.md`` is an absolute
+# symlink on some developer machines; tarfile rejects absolute symlinks
+# during sdist creation, so the whole .claude/ tree is excluded.
+[tool.hatch.build.targets.sdist]
+exclude = [
+    ".claude",
+    ".github",
+    "tests",
+    "rust",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=khora",
+    "--cov-branch",
+    "--cov-report=term-missing",
+    # 85% target on changed surface; aggregate gate set to honest current floor.
+    # Ladders 65 → 70 → 72 → 77 → 80 → 85 per #695.
+    "--cov-fail-under=77",
+    "-m",
+    "not slow and not filter_conformance",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "e2e: End-to-end tests",
+    "slow: Slow tests (skipped by default; run with -m slow)",
+    "soak: Long-running soak/burn-in tests (skipped by default; run with -m soak --no-cov)",
+    "embedded: Tests that exercise the SQLite+LanceDB embedded stack (no Docker required)",
+    "security: Structural/regression tests for the security surface (IGR-225 IDOR gate, etc.)",
+    "filter_conformance: Recall-filter conformance corpus (own CI job; excluded from the main test job)",
+    "filter_enforcement: Recall-filter pushdown/enforcement/threading tests against real backends (embedded spies run in the main test job; PG+Neo4j variants self-skip without their services)",
+]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    # Khora engine backends require database connections for testing
+    "*/engines/khora/backends/pgvector.py",
+    "*/engines/khora/backends/weaviate.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+
+[tool.ruff.format]
+# Replaces black — same style
+quote-style = "double"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "S"]
+ignore = [
+    "E501",   # Line too long — handled by formatter
+    "S101",   # Allow assert in non-test code (used in internal invariants)
+    "UP042",  # str(Enum) pattern is deliberate — StrEnum changes serialization
+    "UP046",  # Generic[T] subclass — PEP 695 type params not adopted yet
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S107", "S108", "S110", "S311"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["khora"]
+
+[tool.ty.environment]
+python-version = "3.13"
+extra-paths = ["src"]
+
+[tool.ty.rules]
+# Suppress noisy rules to start green; tighten incrementally
+invalid-argument-type = "ignore"       # third-party stubs (SQLAlchemy, etc.)
+invalid-method-override = "ignore"     # 4 errors, str(Enum) LSP violations in Permission
+possibly-missing-attribute = "ignore"  # 10 warnings, protocol/union narrowing gaps
+unsupported-operator = "ignore"        # 7 errors, dict typed as dict[str, Any] += int
+call-non-callable = "ignore"           # 2 errors, dynamic factory patterns
+invalid-type-form = "ignore"           # 3 errors, advanced generics
+unknown-argument = "ignore"            # 3 errors, third-party keyword args
+deprecated = "ignore"                  # 6 warnings, third-party deprecations
+unresolved-attribute = "warn"          # 6 errors, protocol/model attribute gaps
+unresolved-reference = "warn"          # 2 errors, forward references
+unresolved-import = "warn"             # optional dependencies (e.g. weaviate, surrealdb)
+invalid-assignment = "warn"            # 2 errors, third-party stub mismatches
+invalid-return-type = "warn"           # 2 errors, implicit None returns
+not-iterable = "warn"                  # 1 error, exception unpacking pattern
+invalid-await = "warn"                 # 3 errors, surrealdb SDK stubs missing async annotations
+unused-ignore-comment = "warn"         # 1 warning, stale type: ignore comment
+
+[tool.uv]
+# Adapter extras can have transitive deps that conflict (e.g. crewai pins
+# ``opentelemetry-api<1.35`` while google-adk pins ``>=1.36``). Each
+# adapter is independently installable; the conflict only matters if a
+# single environment wants both. Declaring them here lets ``uv lock`` /
+# ``uv sync`` resolve each combination in isolation rather than failing
+# the whole project resolution.
+conflicts = [
+    [{ extra = "crewai" }, { extra = "google-adk" }],
+]
+# Reproducibility: ignore PyPI releases uploaded within the last 7 days.
+# Relative pin (re-evaluated on every ``uv sync`` / ``uv lock``) so a
+# fresh sync cannot silently pull a brand-new upstream release that
+# hasn't had time to stabilise. Requires uv >= 0.7 for relative-duration
+# support in ``exclude-newer``.
+exclude-newer = "7 days"
+# Per-package overrides: security-critical packages opt out of the 7-day
+# staging window so a same-week CVE fix isn't held back. Use sparingly —
+# every entry here is an explicit "we trust this package enough to skip
+# the staging window".
+exclude-newer-package = { urllib3 = "0 days", litellm = "0 days", idna = "0 days", "turbopuffer" = "0 days", aiohttp = "0 days", "pydantic-settings" = "0 days", langsmith = "0 days" }  # urllib3: CVE-2026-44431/44432; litellm: CVE-2026-42208/42271/40217 (1.83.10+); idna: CVE-2026-45409 (3.15+); turbopuffer: 2.1.0 newer than the 7-day window when introduced in #824 - opt-in extra so safe to bypass; aiohttp: CVE-2026-34993/47265 (3.14.0+), CVE-2026-54273..54280 (3.14.1+); pydantic-settings: GHSA-4xgf-cpjx-pc3j (fixed 2.14.2); langsmith: GHSA-f4xh-w4cj-qxq8 (0.8.18, released within the 7-day window).
+constraint-dependencies = [
+    # Security: CVE-2026-25645 fixed in 2.33.0
+    "requests>=2.33.1",
+    # Security: CVE-2026-4539 (no listed fix; pin to latest)
+    "pygments>=2.20.0",
+    # Security: CVE-2026-44431 / CVE-2026-44432 fixed in 2.7.0
+    "urllib3>=2.7.0",
+    # Security: CVE-2026-34993 / CVE-2026-47265 fixed in 3.14.0;
+    # CVE-2026-54273 through CVE-2026-54280 fixed in 3.14.1
+    "aiohttp>=3.14.1",
+    # Security: GHSA-537c-gmf6-5ccf (vulnerable OpenSSL in wheels) fixed in 48.0.1
+    "cryptography>=48.0.1",
+    # Security: GHSA-5rvq-cxj2-64vf (quadratic-time querystring DoS) fixed in 0.0.30
+    "python-multipart>=0.0.30",
+    # Security: GHSA-xgmm-8j9v-c9wx (JWK accepted as HMAC secret) fixed in 2.13.0
+    "pyjwt>=2.13.0",
+    # Security: GHSA-f4xh-w4cj-qxq8 (TracingMiddleware arbitrary server-side
+    # file read) fixed in 0.8.18; transitive via langchain-core (langgraph extra)
+    "langsmith>=0.8.18",
+    # #1163: keep logfire consistent with the opentelemetry-sdk that each
+    # conflict fork resolves. The crewai fork pins opentelemetry-api<1.35
+    # (so otel-sdk stays 1.34.x), where only logfire<4.7 is installable
+    # (logfire 4.7 dropped support for otel-sdk <1.35). Every other fork
+    # resolves otel-sdk 1.40.x, where logfire<4.32.1 crashes at import with
+    # `ImportError: cannot import name 'LogData' from 'opentelemetry.sdk._logs'`
+    # (4.32.1 is the first logfire that supports otel-sdk 1.40.0). The
+    # marker-scoped constraints narrow the `logfire` extra per fork without
+    # forcing logfire into the crewai extra. Constraints only narrow already
+    # requested packages, so the base `logfire` floor (>=4.6.0) still gates
+    # whether logfire is installed at all.
+    "logfire<4.7; extra == 'crewai'",
+    "logfire>=4.32.1; extra != 'crewai'",
+]
+
+[tool.uv.sources]
+khora-accel = { path = "rust/khora-accel", editable = true }
+
+[dependency-groups]
+dev = [
+    "prek>=0.3.13",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.1.0",
+    "pytest-xdist>=3.8.0",
+    "pytest-timeout>=2.3.0",
+    "ruff~=0.15.12",
+    "ty>=0.0.34",
+    "rapidfuzz>=3.14.3",  # For ty type checking of optional accel module
+    "spacy>=3.8.11",
+    "aiosqlite>=0.21.0",  # For SQLite backend tests
+    "pyarrow>=24.0.0",  # For sqlite-lance backend tests
+    "opentelemetry-sdk>=1.34.1",  # For OTel telemetry tests
+    "opentelemetry-exporter-otlp-proto-http>=1.34.1",  # For OTel exporter tests
+    # #1163: logfire belongs in the always-synced dev group so a bare
+    # `uv run` (which re-syncs the default environment) manages and upgrades
+    # it alongside opentelemetry-sdk. As an opt-in extra only, logfire was
+    # left as a stale leftover when `uv run` bumped otel-sdk past the version
+    # the resident logfire 4.6.0 tolerated, crashing pytest's logfire plugin
+    # with `ImportError: cannot import name 'LogData'`. The marker-scoped
+    # constraint-dependencies pin each fork's logfire to its otel-sdk branch.
+    "logfire>=4.6.0",  # logfire pytest plugin loads in the dev/test env
+    "psutil>=5.9.0",  # RSS sampling for soak harness
+    "hypothesis>=6.152.4",  # property-based tests for retrieval invariants
+]

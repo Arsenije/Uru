@@ -1,0 +1,389 @@
+"""Unit tests for Chronicle abstention signals.
+
+Tests the pure ``_compute_abstention_signals`` helper plus an integration
+test that asserts ``RecallResult.metadata["abstention_signals"]`` is
+populated by the ``recall()`` site.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
+
+import pytest
+
+from khora.config import KhoraConfig
+from khora.core.models import Chunk, Entity
+from khora.engines.chronicle.engine import ChronicleEngine
+from khora.khora import RecallResult
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_chunk() -> Chunk:
+    """Create a minimal Chunk."""
+    doc_id = uuid4()
+    return Chunk(
+        id=uuid4(),
+        namespace_id=uuid4(),
+        document_id=doc_id,
+        content="content",
+        created_at=datetime.now(UTC),
+    )
+
+
+def _make_entity() -> Entity:
+    """Create a minimal Entity."""
+    return Entity(
+        id=uuid4(),
+        namespace_id=uuid4(),
+        name="Acme",
+        entity_type="ORG",
+    )
+
+
+def _make_engine(**kwargs: Any) -> ChronicleEngine:
+    """Build a ChronicleEngine without going through real storage.
+
+    We only need the abstention-signal config + helper, so the empty
+    KhoraConfig is fine — ``_compute_abstention_signals`` never touches
+    storage or embedder.
+    """
+    return ChronicleEngine(KhoraConfig(), **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# _compute_abstention_signals — unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestComputeAbstentionSignals:
+    """Tests for the pure abstention-signal helper."""
+
+    def test_healthy_result_no_flags(self):
+        """Chunks present, entities present, high top score → all clear."""
+        engine = _make_engine()
+        chunks = [(_make_chunk(), 0.9), (_make_chunk(), 0.7)]
+        entities = [(_make_entity(), 0.85)]
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["entities_empty"] is False
+        assert sig["chunks_empty"] is False
+        assert sig["chunks_below_min"] is False
+        assert sig["top_score_low"] is False
+        assert sig["combined_score"] == 0.0
+        assert sig["should_abstain"] is False
+
+    def test_empty_entities_only(self):
+        """Chunks healthy but no entities → entities_empty fires alone."""
+        engine = _make_engine()
+        chunks = [(_make_chunk(), 0.9)]
+        entities: list[tuple[Entity, float]] = []
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["entities_empty"] is True
+        assert sig["chunks_empty"] is False
+        assert sig["chunks_below_min"] is False
+        assert sig["top_score_low"] is False
+        assert sig["combined_score"] == pytest.approx(0.3)
+        # 0.3 < default 0.5 threshold → no abstention yet
+        assert sig["should_abstain"] is False
+
+    def test_empty_chunks_triggers_all_chunk_flags(self):
+        """No chunks → empty/below-min/top-low all fire; combined → 1.0."""
+        engine = _make_engine()
+        chunks: list[tuple[Chunk, float]] = []
+        entities: list[tuple[Entity, float]] = []
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["entities_empty"] is True
+        assert sig["chunks_empty"] is True
+        assert sig["chunks_below_min"] is True
+        assert sig["top_score_low"] is True
+        assert sig["combined_score"] == pytest.approx(1.0)
+        assert sig["should_abstain"] is True
+
+    def test_low_top_score_with_decent_chunks(self):
+        """Chunks present but top cosine below the floor → only top_score_low
+        fires. Under the default cosine_floor mode (#1331) the topicality floor
+        decides on its own, so should_abstain is True even though chunks and
+        entities are present (the issue's whole point). combined_score still
+        reports the legacy 0.3 weighting (unchanged public contract)."""
+        engine = _make_engine()
+        chunks = [(_make_chunk(), 0.1), (_make_chunk(), 0.05)]
+        entities = [(_make_entity(), 0.7)]
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["entities_empty"] is False
+        assert sig["chunks_empty"] is False
+        assert sig["chunks_below_min"] is False
+        assert sig["top_score_low"] is True
+        assert sig["combined_score"] == pytest.approx(0.3)
+        assert sig["should_abstain"] is True
+
+    def test_custom_min_chunks_threshold(self):
+        """abstention_min_chunks=5 with 3 chunks → chunks_below_min fires."""
+        engine = _make_engine(abstention_min_chunks=5)
+        chunks = [(_make_chunk(), 0.9) for _ in range(3)]
+        entities = [(_make_entity(), 0.8)]
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["chunks_empty"] is False
+        assert sig["chunks_below_min"] is True
+        assert sig["top_score_low"] is False
+        # only chunks_below_min fires (weight 0.4)
+        assert sig["combined_score"] == pytest.approx(0.4)
+        assert sig["should_abstain"] is False
+
+    def test_custom_min_top_score_threshold(self):
+        """abstention_min_top_score=0.7 with top score 0.5 → top_score_low fires."""
+        engine = _make_engine(abstention_min_top_score=0.7)
+        chunks = [(_make_chunk(), 0.5)]
+        entities = [(_make_entity(), 0.9)]
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["top_score_low"] is True
+        assert sig["combined_score"] == pytest.approx(0.3)
+
+    def test_custom_combined_threshold_makes_weak_signals_trigger(self):
+        """Lowering abstention_combined_threshold flips weak signals to abstain.
+        The combined_threshold only governs the decision in weighted mode
+        (#1331), so build the engine in that mode."""
+        engine = _make_engine(abstention_combined_threshold=0.3, abstention_mode="weighted")
+        chunks = [(_make_chunk(), 0.9)]
+        entities: list[tuple[Entity, float]] = []  # only entities_empty fires
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["entities_empty"] is True
+        assert sig["combined_score"] == pytest.approx(0.3)
+        # at threshold 0.3 the 0.3 combined score now trips abstention
+        assert sig["should_abstain"] is True
+
+    def test_two_signals_below_default_threshold(self):
+        """Two flags (0.3 + 0.3 = 0.6) crosses default 0.5 threshold."""
+        engine = _make_engine()
+        chunks = [(_make_chunk(), 0.1)]  # top_score_low fires
+        entities: list[tuple[Entity, float]] = []  # entities_empty fires
+
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1] if chunks else 0.0)
+
+        assert sig["combined_score"] == pytest.approx(0.6)
+        assert sig["should_abstain"] is True
+
+    def test_top_score_low_reads_raw_vector_not_post_rerank(self):
+        """Regression for issue #809.
+
+        Cross-encoder reranking compresses post-fusion scores into a
+        narrow high-side band (~0.6-0.8) regardless of topical overlap.
+        When the displayed top-chunk score is high but the underlying
+        pre-rerank vector cosine is low (clearly off-topic query),
+        ``top_score_low`` MUST fire on the raw cosine, not on the
+        post-rerank display value - otherwise the abstention signal
+        becomes a steady-state false negative on every rerank-enabled
+        recall.
+        """
+        engine = _make_engine()
+        # Post-rerank display score is healthy (passes the default 0.3 min)
+        chunks = [(_make_chunk(), 0.715)]
+        entities = [(_make_entity(), 0.85)]
+
+        # ...but the actual pre-rerank cosine is well below threshold.
+        sig = engine._compute_abstention_signals(chunks, entities, top_vector_score=0.18)
+
+        assert sig["top_score_low"] is True, (
+            "top_score_low must reflect the raw vector cosine, not the post-rerank display score - see #809"
+        )
+        # Sanity: feeding the displayed score (the buggy v0.16.2 behavior)
+        # would make this False, so the assertion above is meaningful.
+        sig_buggy = engine._compute_abstention_signals(chunks, entities, top_vector_score=chunks[0][1])
+        assert sig_buggy["top_score_low"] is False
+
+
+# ---------------------------------------------------------------------------
+# Integration with recall() — assert metadata is populated end-to-end
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_recall_populates_abstention_signals_metadata():
+    """recall() must place abstention_signals in RecallResult.metadata."""
+    engine = _make_engine()
+
+    # Mock the storage coordinator to return predictable empty channels.
+    mock_storage = MagicMock()
+    mock_storage.search_fulltext_chunks = AsyncMock(return_value=[])
+    mock_storage.search_similar_chunks = AsyncMock(return_value=[])
+    mock_storage.search_similar_entities = AsyncMock(return_value=[])
+    engine._storage = mock_storage
+
+    # Mock embedder so recall() can produce a query embedding.
+    mock_embedder = MagicMock()
+    mock_embedder.embed = AsyncMock(return_value=[0.1] * 1536)
+    engine._embedder = mock_embedder
+    engine._connected = True
+
+    namespace_id = uuid4()
+    result: RecallResult = await engine.recall("who founded Acme", namespace_id, limit=5)
+
+    assert "abstention_signals" in result.engine_info
+    sig = result.engine_info["abstention_signals"]
+    # Empty stores → all signals fire, full abstention
+    assert sig["entities_empty"] is True
+    assert sig["chunks_empty"] is True
+    assert sig["chunks_below_min"] is True
+    assert sig["top_score_low"] is True
+    assert sig["combined_score"] == pytest.approx(1.0)
+    assert sig["should_abstain"] is True
+
+
+@pytest.mark.asyncio
+async def test_recall_metadata_keeps_existing_keys():
+    """Adding abstention_signals must not displace the prior metadata keys."""
+    engine = _make_engine()
+
+    mock_storage = MagicMock()
+    mock_storage.search_fulltext_chunks = AsyncMock(return_value=[])
+    mock_storage.search_similar_chunks = AsyncMock(return_value=[])
+    mock_storage.search_similar_entities = AsyncMock(return_value=[])
+    engine._storage = mock_storage
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed = AsyncMock(return_value=[0.1] * 1536)
+    engine._embedder = mock_embedder
+    engine._connected = True
+
+    result = await engine.recall("query", uuid4())
+
+    # Pre-existing keys (regression guard)
+    assert result.engine_info["engine"] == "chronicle"
+    assert "channels" in result.engine_info
+    assert "decay_weight" in result.engine_info
+    assert "max_raw_vector_score" in result.engine_info
+    assert "timings" in result.engine_info
+    # New key
+    assert "abstention_signals" in result.engine_info
+    # #1331: calibrated confidence is surfaced alongside the signals.
+    assert "confidence" in result.engine_info
+    assert 0.0 <= result.engine_info["confidence"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# #1331: thresholds inherit from config.query; explicit kwargs win.
+# ---------------------------------------------------------------------------
+
+
+def test_thresholds_default_from_config_query():
+    """With no kwargs, the engine inherits config.query.abstention_* (#1331)."""
+    cfg = KhoraConfig()
+    cfg.query.abstention_min_top_score = 0.42
+    cfg.query.abstention_min_chunks = 3
+    cfg.query.abstention_combined_threshold = 0.66
+    cfg.query.abstention_mode = "weighted"
+
+    engine = ChronicleEngine(cfg)
+
+    assert engine._abstention_min_top_score == 0.42
+    assert engine._abstention_min_chunks == 3
+    assert engine._abstention_combined_threshold == 0.66
+    assert engine._abstention_mode == "weighted"
+
+
+def test_explicit_kwargs_win_over_config():
+    """An explicit constructor kwarg overrides the config default (#1331)."""
+    cfg = KhoraConfig()
+    cfg.query.abstention_min_top_score = 0.42
+
+    engine = ChronicleEngine(cfg, abstention_min_top_score=0.9, abstention_mode="weighted")
+
+    assert engine._abstention_min_top_score == 0.9
+    assert engine._abstention_mode == "weighted"
+
+
+# ---------------------------------------------------------------------------
+# #834: RecallChunk.score is min-max normalized in [0, 1] on every engine.
+# ---------------------------------------------------------------------------
+
+
+def _make_chunk_with_doc(content: str) -> Chunk:
+    """Chunk wired with namespace + document IDs and a recent created_at."""
+    return Chunk(
+        id=uuid4(),
+        namespace_id=uuid4(),
+        document_id=uuid4(),
+        content=content,
+        created_at=datetime.now(UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_recall_chunk_scores_are_min_max_normalized():
+    """#834: Chronicle RecallChunk.score is min-max normalized in [0, 1].
+
+    Reporter Damir observed post-rerank fused scores on an arbitrary scale,
+    e.g. [0.7285, 0.0236, 0.0171]. The unified contract: top = 1.0, bottom
+    = 0.0 in the returned set.
+    """
+    engine = _make_engine()
+
+    chunks = [_make_chunk_with_doc(f"chunk-{i}") for i in range(3)]
+    # Raw cosines on the semantic channel - descending order, distinct values
+    # so the post-fusion fused score is also strictly monotonic.
+    semantic_results: list[tuple[Chunk, float]] = [
+        (chunks[0], 0.92),
+        (chunks[1], 0.61),
+        (chunks[2], 0.31),
+    ]
+
+    mock_storage = MagicMock()
+    mock_storage.search_fulltext_chunks = AsyncMock(return_value=[])
+    mock_storage.search_similar_chunks = AsyncMock(return_value=semantic_results)
+    mock_storage.search_similar_entities = AsyncMock(return_value=[])
+    engine._storage = mock_storage
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed = AsyncMock(return_value=[0.1] * 1536)
+    engine._embedder = mock_embedder
+    engine._connected = True
+
+    result: RecallResult = await engine.recall("alpha", uuid4(), limit=3)
+
+    assert len(result.chunks) == 3
+    assert result.chunks[0].score == 1.0
+    assert result.chunks[-1].score == 0.0
+    # The middle chunk must fall strictly between - rules out the legacy
+    # "raw fused score" leak where the middle could equal one of the bounds.
+    assert 0.0 < result.chunks[1].score < 1.0
+
+
+@pytest.mark.asyncio
+async def test_recall_chunk_scores_single_chunk_is_one():
+    """Edge case: a single returned chunk collapses to score=1.0."""
+    engine = _make_engine()
+
+    chunks = [_make_chunk_with_doc("solo")]
+    mock_storage = MagicMock()
+    mock_storage.search_fulltext_chunks = AsyncMock(return_value=[])
+    mock_storage.search_similar_chunks = AsyncMock(return_value=[(chunks[0], 0.42)])
+    mock_storage.search_similar_entities = AsyncMock(return_value=[])
+    engine._storage = mock_storage
+
+    mock_embedder = MagicMock()
+    mock_embedder.embed = AsyncMock(return_value=[0.1] * 1536)
+    engine._embedder = mock_embedder
+    engine._connected = True
+
+    result: RecallResult = await engine.recall("alpha", uuid4(), limit=3)
+
+    assert len(result.chunks) == 1
+    assert result.chunks[0].score == 1.0

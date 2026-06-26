@@ -1,0 +1,735 @@
+"""Tests for :class:`SQLiteLanceVectorAdapter`."""
+
+from __future__ import annotations
+
+import asyncio
+import math
+from datetime import UTC, datetime, timedelta, timezone
+from pathlib import Path
+from uuid import uuid4
+
+import pytest
+
+try:
+    import lancedb  # noqa: F401
+    import pyarrow  # noqa: F401
+
+    _HAS_LANCEDB = True
+except ImportError:
+    _HAS_LANCEDB = False
+
+from khora.core.models import Chunk
+from khora.core.models.entity import Entity
+
+pytestmark = pytest.mark.skipif(not _HAS_LANCEDB, reason="lancedb not installed")
+
+if _HAS_LANCEDB:
+    from khora.storage.backends.sqlite_lance.connection import (
+        EmbeddedStorageHandle,
+        EmbeddedStorageHandleConfig,
+    )
+    from khora.storage.backends.sqlite_lance.graph import SQLiteLanceGraphAdapter
+    from khora.storage.backends.sqlite_lance.vector import SQLiteLanceVectorAdapter
+
+
+# ---------------------------------------------------------------------------
+# Fixtures — back the handle with the real Alembic-migrated schema so the
+# adapter's raw SQL is validated against the production table shape.
+# ---------------------------------------------------------------------------
+
+
+async def _build_handle(db_path: Path, lance_path: Path, *, use_halfvec: bool) -> EmbeddedStorageHandle:
+    cfg = EmbeddedStorageHandleConfig(
+        db_path=str(db_path),
+        lance_path=str(lance_path),
+        embedding_dimension=8,
+        use_halfvec=use_halfvec,
+    )
+    h = EmbeddedStorageHandle(cfg)
+    await h.connect()
+    # Tests use bare namespace/document UUIDs without seeding
+    # ``memory_namespaces`` / ``documents`` rows — FKs are out of scope
+    # for this adapter's unit tests and are exercised in integration.
+    await h.sqlite.execute("PRAGMA foreign_keys = OFF")
+    await h.sqlite.commit()
+    return h
+
+
+@pytest.fixture
+async def handle(migrated_sqlite_db: Path, tmp_path: Path):
+    h = await _build_handle(migrated_sqlite_db, tmp_path / "k.lance", use_halfvec=False)
+    yield h
+    await h.disconnect()
+
+
+@pytest.fixture
+async def halfvec_handle(migrated_sqlite_db: Path, tmp_path: Path):
+    h = await _build_handle(migrated_sqlite_db, tmp_path / "k.lance", use_halfvec=True)
+    yield h
+    await h.disconnect()
+
+
+@pytest.fixture
+async def adapter(handle):
+    return SQLiteLanceVectorAdapter(handle)
+
+
+@pytest.fixture
+async def graph(handle):
+    """Graph adapter against the same handle — owner of entities SQLite rows.
+
+    The vector adapter's entity operations (``create_entity``,
+    ``update_entity``, ``update_entity_embedding``) only touch LanceDB;
+    the SQLite ``entities`` row is owned by the graph adapter.  Entity
+    tests that exercise ``entity_exists`` / ``update_entity_embedding``
+    must seed the row through the graph adapter first — this mirrors how
+    ``StorageCoordinator`` wires the two adapters together.
+    """
+    return SQLiteLanceGraphAdapter(handle)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _unit(dim: int, idx: int = 0) -> list[float]:
+    vec = [0.0] * dim
+    vec[idx % dim] = 1.0
+    return vec
+
+
+def _make_chunk(
+    namespace_id,
+    document_id,
+    *,
+    content: str = "test content",
+    embedding: list[float] | None = None,
+    index: int = 0,
+    created_at: datetime | None = None,
+    source_timestamp: datetime | None = None,
+    chunker_info: dict | None = None,
+) -> Chunk:
+    return Chunk(
+        id=uuid4(),
+        namespace_id=namespace_id,
+        document_id=document_id,
+        content=content,
+        chunk_index=index,
+        chunker_info=chunker_info or {},
+        embedding=embedding,
+        embedding_model="test-model" if embedding else "",
+        created_at=created_at or datetime.now(UTC),
+        source_timestamp=source_timestamp,
+    )
+
+
+def _make_entity(namespace_id, *, name: str = "alice", embedding=None) -> Entity:
+    return Entity(
+        id=uuid4(),
+        namespace_id=namespace_id,
+        name=name,
+        entity_type="PERSON",
+        description="",
+        embedding=embedding,
+        embedding_model="test-model" if embedding else "",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lifecycle + health
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycle:
+    async def test_is_healthy(self, adapter: SQLiteLanceVectorAdapter):
+        assert await adapter.is_healthy() is True
+
+    async def test_disconnect_marks_unhealthy(self, tmp_path: Path):
+        cfg = EmbeddedStorageHandleConfig(
+            db_path=str(tmp_path / "k.db"),
+            lance_path=str(tmp_path / "k.lance"),
+            embedding_dimension=4,
+        )
+        h = EmbeddedStorageHandle(cfg)
+        a = SQLiteLanceVectorAdapter(h)
+        await a.connect()
+        assert await a.is_healthy() is True
+        await a.disconnect()
+        assert await a.is_healthy() is False
+
+
+# ---------------------------------------------------------------------------
+# Chunk CRUD
+# ---------------------------------------------------------------------------
+
+
+class TestChunkCRUD:
+    async def test_create_and_get(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        c = _make_chunk(ns, doc, embedding=_unit(8, 0))
+        created = await adapter.create_chunk(c)
+        assert created.id == c.id
+
+        fetched = await adapter.get_chunk(c.id, namespace_id=ns)
+        assert fetched is not None
+        assert fetched.id == c.id
+        assert fetched.content == c.content
+        # Embedding lives in LanceDB only — get_chunk reads from SQLite
+        # which has no ``embedding`` column (LanceDB owns vectors).
+        assert fetched.embedding is None
+
+    async def test_create_without_embedding_skips_lance(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        c = _make_chunk(ns, doc, embedding=None)
+        await adapter.create_chunk(c)
+
+        # SQLite row should exist; LanceDB table should still be empty.
+        fetched = await adapter.get_chunk(c.id, namespace_id=ns)
+        assert fetched is not None
+
+        tbl = await adapter._chunks_table()  # type: ignore[reportPrivateUsage]
+        assert await tbl.count_rows() == 0
+
+    async def test_create_chunks_batch(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i), index=i) for i in range(5)]
+        result = await adapter.create_chunks_batch(chunks)
+        assert len(result) == 5
+        assert await adapter.count_chunks(ns) == 5
+
+        tbl = await adapter._chunks_table()  # type: ignore[reportPrivateUsage]
+        assert await tbl.count_rows() == 5
+
+    async def test_get_chunks_batch(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(3)]
+        await adapter.create_chunks_batch(chunks)
+
+        fetched = await adapter.get_chunks_batch([c.id for c in chunks], namespace_id=ns)
+        assert set(fetched.keys()) == {c.id for c in chunks}
+
+    async def test_get_chunks_batch_empty(self, adapter: SQLiteLanceVectorAdapter):
+        assert await adapter.get_chunks_batch([], namespace_id=uuid4()) == {}
+
+    async def test_get_chunks_by_document(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i), index=i) for i in range(3)]
+        await adapter.create_chunks_batch(chunks)
+
+        fetched = await adapter.get_chunks_by_document(doc, namespace_id=ns)
+        assert len(fetched) == 3
+        # Ordered by chunk_index
+        assert [c.chunk_index for c in fetched] == [0, 1, 2]
+
+    async def test_delete_chunks_by_document(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(3)]
+        await adapter.create_chunks_batch(chunks)
+
+        deleted = await adapter.delete_chunks_by_document(doc, namespace_id=ns)
+        assert deleted == 3
+
+        assert await adapter.count_chunks(ns) == 0
+        tbl = await adapter._chunks_table()  # type: ignore[reportPrivateUsage]
+        assert await tbl.count_rows() == 0
+
+    async def test_chunker_info_roundtrip(self, adapter: SQLiteLanceVectorAdapter):
+        """chunker_info round-trips independently of metadata."""
+        ns, doc = uuid4(), uuid4()
+        c = _make_chunk(
+            ns,
+            doc,
+            embedding=_unit(8, 0),
+            chunker_info={"strategy": "fixed", "tokens": 256},
+        )
+        c.metadata = {"doc_key": "doc_val"}
+        await adapter.create_chunk(c)
+
+        fetched = await adapter.get_chunk(c.id, namespace_id=ns)
+        assert fetched is not None
+        assert fetched.chunker_info == {"strategy": "fixed", "tokens": 256}
+        assert fetched.metadata == {"doc_key": "doc_val"}
+
+    async def test_occurred_at_roundtrip(self, adapter: SQLiteLanceVectorAdapter):
+        """occurred_at persists and reads back, distinct from created_at/source_timestamp."""
+        ns, doc = uuid4(), uuid4()
+        occurred = datetime(2023, 7, 4, 12, 30, tzinfo=UTC)
+        c = _make_chunk(
+            ns,
+            doc,
+            embedding=_unit(8, 0),
+            created_at=datetime(2026, 1, 1, tzinfo=UTC),
+            source_timestamp=datetime(2025, 1, 1, tzinfo=UTC),
+        )
+        c.occurred_at = occurred
+        await adapter.create_chunk(c)
+
+        fetched = await adapter.get_chunk(c.id, namespace_id=ns)
+        assert fetched is not None
+        assert fetched.occurred_at == occurred
+        # Distinct from the other two timestamps.
+        assert fetched.created_at != occurred
+        assert fetched.source_timestamp != occurred
+
+    async def test_occurred_at_defaults_none(self, adapter: SQLiteLanceVectorAdapter):
+        """A chunk without occurred_at reads back NULL."""
+        ns, doc = uuid4(), uuid4()
+        c = _make_chunk(ns, doc, embedding=_unit(8, 0))
+        await adapter.create_chunk(c)
+
+        fetched = await adapter.get_chunk(c.id, namespace_id=ns)
+        assert fetched is not None
+        assert fetched.occurred_at is None
+
+    async def test_delete_chunks_by_document_with_session_commits_immediately(self, adapter: SQLiteLanceVectorAdapter):
+        """A SQLAlchemy session can never cover the raw aiosqlite handle (#1135).
+
+        Deferring the commit to the caller left the DELETE pending on the
+        shared handle until a later unrelated commit applied it outside any
+        controlled transaction, and skipped the LanceDB compensation
+        entirely. The adapter must commit its own SQLite work and compensate
+        LanceDB regardless of the ``session`` argument.
+        """
+        import aiosqlite
+
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(2)]
+        await adapter.create_chunks_batch(chunks)
+
+        sentinel = object()
+        deleted = await adapter.delete_chunks_by_document(doc, namespace_id=ns, session=sentinel)  # type: ignore[arg-type]
+        assert deleted == 2
+
+        # The DELETE must already be committed — visible to a fresh
+        # connection, not pending inside the shared handle's implicit
+        # transaction.
+        async with aiosqlite.connect(adapter._handle.config.db_path) as conn:  # type: ignore[reportPrivateUsage]
+            cur = await conn.execute(
+                "SELECT COUNT(*) FROM chunks WHERE document_id = ?",
+                (doc.hex,),
+            )
+            row = await cur.fetchone()
+            assert row is not None and row[0] == 0
+
+        # LanceDB compensation ran — no orphaned vectors.
+        tbl = await adapter._chunks_table()  # type: ignore[reportPrivateUsage]
+        assert await tbl.count_rows() == 0
+
+
+# ---------------------------------------------------------------------------
+# Vector search
+# ---------------------------------------------------------------------------
+
+
+class TestSearchSimilar:
+    async def test_cosine_returns_nearest(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        # Three basis vectors; query e0 should rank chunk_0 first.
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(3)]
+        await adapter.create_chunks_batch(chunks)
+
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=3)
+        assert len(results) > 0
+        top_chunk, top_score = results[0]
+        assert top_chunk.id == chunks[0].id
+        assert math.isclose(top_score, 1.0, abs_tol=1e-3)
+
+    async def test_min_similarity_filter(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        # Two orthogonal vectors; similarity to e0 is 1.0 for self, 0.0 for the other.
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(2)]
+        await adapter.create_chunks_batch(chunks)
+
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=10, min_similarity=0.5)
+        # Only the self-match should clear the threshold.
+        assert len(results) == 1
+        assert results[0][0].id == chunks[0].id
+
+    async def test_limit_honored(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(5)]
+        await adapter.create_chunks_batch(chunks)
+
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=2)
+        assert len(results) == 2
+
+    async def test_filter_document_ids(self, adapter: SQLiteLanceVectorAdapter):
+        ns = uuid4()
+        doc_a, doc_b = uuid4(), uuid4()
+        await adapter.create_chunks_batch(
+            [
+                _make_chunk(ns, doc_a, embedding=_unit(8, 0)),
+                _make_chunk(ns, doc_b, embedding=_unit(8, 1)),
+            ]
+        )
+
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=10, filter_document_ids=[doc_b])
+        assert len(results) == 1
+        assert results[0][0].document_id == doc_b
+
+    async def test_temporal_filter(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        old = datetime.now(UTC) - timedelta(days=30)
+        new = datetime.now(UTC)
+        await adapter.create_chunks_batch(
+            [
+                _make_chunk(ns, doc, embedding=_unit(8, 0), created_at=old),
+                _make_chunk(ns, doc, embedding=_unit(8, 1), created_at=new),
+            ]
+        )
+
+        cutoff = datetime.now(UTC) - timedelta(days=7)
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=10, created_after=cutoff)
+        assert len(results) == 1
+        assert results[0][0].created_at >= cutoff
+
+    async def test_namespace_isolation(self, adapter: SQLiteLanceVectorAdapter):
+        ns_a, ns_b, doc = uuid4(), uuid4(), uuid4()
+        await adapter.create_chunks_batch(
+            [
+                _make_chunk(ns_a, doc, embedding=_unit(8, 0)),
+                _make_chunk(ns_b, doc, embedding=_unit(8, 0)),
+            ]
+        )
+
+        results = await adapter.search_similar(ns_a, _unit(8, 0), limit=10)
+        assert len(results) == 1
+        assert results[0][0].namespace_id == ns_a
+
+    async def test_backfilled_chunk_returned_under_upper_bound(self, adapter: SQLiteLanceVectorAdapter):
+        """Regression for #1136.
+
+        A backfilled chunk (created_at = ingest time = now, source_timestamp =
+        historical event time) must be returned when the query's upper temporal
+        bound covers its source_timestamp. The LanceDB ANN pre-filter narrows on
+        ``created_at`` only, but the contract axis is
+        ``COALESCE(source_timestamp, created_at)``, so the pre-filter must not
+        exclude the chunk before the SQLite COALESCE refinement can admit it.
+        """
+        ns, doc = uuid4(), uuid4()
+        backfilled = _make_chunk(
+            ns,
+            doc,
+            embedding=_unit(8, 0),
+            created_at=datetime.now(UTC),
+            source_timestamp=datetime(2025, 1, 15, tzinfo=UTC),
+        )
+        await adapter.create_chunks_batch([backfilled])
+
+        results = await adapter.search_similar(
+            ns,
+            _unit(8, 0),
+            limit=10,
+            created_before=datetime(2025, 2, 1, tzinfo=UTC),
+        )
+        assert len(results) == 1
+        assert results[0][0].id == backfilled.id
+
+    async def test_upper_bound_inclusive(self, adapter: SQLiteLanceVectorAdapter):
+        """Regression for #1136 boundary alignment.
+
+        The upper temporal bound is inclusive (``<=``) to match search_fulltext
+        and the pgvector sibling. A chunk whose effective timestamp equals
+        ``created_before`` exactly must be returned.
+        """
+        ns, doc = uuid4(), uuid4()
+        boundary = datetime(2025, 1, 15, tzinfo=UTC)
+        chunk = _make_chunk(
+            ns,
+            doc,
+            embedding=_unit(8, 0),
+            created_at=datetime.now(UTC),
+            source_timestamp=boundary,
+        )
+        await adapter.create_chunks_batch([chunk])
+
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=10, created_before=boundary)
+        assert len(results) == 1
+        assert results[0][0].id == chunk.id
+
+
+# ---------------------------------------------------------------------------
+# Full-text search (FTS5)
+# ---------------------------------------------------------------------------
+
+
+class TestSearchFulltext:
+    async def test_bm25_ranks_matches(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        await adapter.create_chunks_batch(
+            [
+                _make_chunk(ns, doc, content="quick brown fox jumps", index=0),
+                _make_chunk(ns, doc, content="slow green turtle walks", index=1),
+                _make_chunk(ns, doc, content="quick red fox runs fast", index=2),
+            ]
+        )
+
+        results = await adapter.search_fulltext(ns, "quick fox", limit=10)
+        assert len(results) == 2
+        # Higher score = better match. Both chunks match; either order is OK,
+        # we just verify FTS5 scores are finite and positive.
+        for _chunk, score in results:
+            assert math.isfinite(score)
+
+    async def test_fulltext_namespace_isolation(self, adapter: SQLiteLanceVectorAdapter):
+        ns_a, ns_b, doc = uuid4(), uuid4(), uuid4()
+        await adapter.create_chunks_batch(
+            [
+                _make_chunk(ns_a, doc, content="unique token ns_a"),
+                _make_chunk(ns_b, doc, content="unique token ns_b"),
+            ]
+        )
+
+        a_hits = await adapter.search_fulltext(ns_a, "unique", limit=10)
+        assert len(a_hits) == 1
+        assert a_hits[0][0].namespace_id == ns_a
+
+
+# ---------------------------------------------------------------------------
+# Temporal-window correctness across timezone offsets (#1146)
+#
+# Timestamps are stored as TEXT and the temporal pushdown compares them with
+# SQL ``>=`` / ``<=`` — lexicographic on TEXT. That is only chronological when
+# every stored value and bind parameter share one offset representation. A
+# connector emitting an explicit non-UTC offset must therefore be normalized
+# to canonical UTC before storing AND before binding, or window edges admit /
+# drop the wrong chunks.
+# ---------------------------------------------------------------------------
+
+
+class TestTemporalOffsetNormalization:
+    async def test_search_similar_non_utc_offset_excluded_by_true_instant(self, adapter: SQLiteLanceVectorAdapter):
+        """A ``+05:30`` source_timestamp must compare by its true UTC instant.
+
+        ``2026-01-15T23:00:00+05:30`` is ``2026-01-15T17:30:00+00:00`` in UTC.
+        A window upper-bounded at ``18:00 UTC`` includes it by instant, but the
+        raw ISO string ``...T23:00:00+05:30`` sorts AFTER ``...T18:00:00+00:00``
+        lexicographically, so on main it is wrongly excluded.
+        """
+        ns, doc = uuid4(), uuid4()
+        ist = timezone(timedelta(hours=5, minutes=30))
+        # 23:00 IST == 17:30 UTC.
+        offset_ts = datetime(2026, 1, 15, 23, 0, 0, tzinfo=ist)
+        await adapter.create_chunks_batch([_make_chunk(ns, doc, embedding=_unit(8, 0), source_timestamp=offset_ts)])
+
+        # Window [16:00 UTC, 18:00 UTC] contains the true instant 17:30 UTC.
+        after = datetime(2026, 1, 15, 16, 0, 0, tzinfo=UTC)
+        before = datetime(2026, 1, 15, 18, 0, 0, tzinfo=UTC)
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=10, created_after=after, created_before=before)
+        assert len(results) == 1
+        # And the round-tripped value must come back UTC-aware.
+        got = results[0][0].source_timestamp
+        assert got is not None
+        assert got.utcoffset() == timedelta(0)
+        assert got == offset_ts
+
+    async def test_search_similar_non_utc_offset_excluded_when_outside_window(self, adapter: SQLiteLanceVectorAdapter):
+        """Same chunk, a window that ends before its true instant must drop it.
+
+        17:30 UTC is after a 17:00 UTC upper bound, so the chunk is excluded by
+        true instant — even though ``...T23:00:00+05:30`` would lexically sort
+        the other way against ``...T17:00:00+00:00``.
+        """
+        ns, doc = uuid4(), uuid4()
+        ist = timezone(timedelta(hours=5, minutes=30))
+        offset_ts = datetime(2026, 1, 15, 23, 0, 0, tzinfo=ist)  # 17:30 UTC
+        await adapter.create_chunks_batch([_make_chunk(ns, doc, embedding=_unit(8, 0), source_timestamp=offset_ts)])
+
+        before = datetime(2026, 1, 15, 17, 0, 0, tzinfo=UTC)
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=10, created_before=before)
+        assert results == []
+
+    async def test_search_fulltext_naive_and_aware_sort_consistently_at_boundary(
+        self, adapter: SQLiteLanceVectorAdapter
+    ):
+        """Naive and tz-aware source_timestamps at the same instant both match.
+
+        A naive ``...T17:30:00`` (treated as UTC) and an aware
+        ``...T23:00:00+05:30`` (also 17:30 UTC) are the same instant. A UTC
+        window covering that instant must return both. On main the naive value
+        (no offset suffix) and the aware value sort inconsistently against the
+        ``+00:00`` bound, so one is dropped.
+        """
+        ns, doc = uuid4(), uuid4()
+        ist = timezone(timedelta(hours=5, minutes=30))
+        naive_ts = datetime(2026, 1, 15, 17, 30, 0)  # treated as UTC
+        aware_ts = datetime(2026, 1, 15, 23, 0, 0, tzinfo=ist)  # 17:30 UTC
+        await adapter.create_chunks_batch(
+            [
+                _make_chunk(ns, doc, content="boundary alpha token", index=0, source_timestamp=naive_ts),
+                _make_chunk(ns, doc, content="boundary beta token", index=1, source_timestamp=aware_ts),
+            ]
+        )
+
+        after = datetime(2026, 1, 15, 17, 0, 0, tzinfo=UTC)
+        before = datetime(2026, 1, 15, 18, 0, 0, tzinfo=UTC)
+        results = await adapter.search_fulltext(ns, "boundary", limit=10, created_after=after, created_before=before)
+        assert len(results) == 2
+
+
+# ---------------------------------------------------------------------------
+# Entity operations
+# ---------------------------------------------------------------------------
+
+
+class TestEntities:
+    async def test_create_and_exists(self, adapter: SQLiteLanceVectorAdapter, graph):
+        ns = uuid4()
+        e = _make_entity(ns, embedding=_unit(8, 0))
+        # Entity SQLite row is graph-owned; vector adapter writes only
+        # the LanceDB embedding.
+        await graph.create_entity(e)
+        await adapter.create_entity(e)
+        assert await adapter.entity_exists(e.id, namespace_id=ns) is True
+        assert await adapter.entity_exists(uuid4(), namespace_id=ns) is False
+
+    async def test_entity_exists_requires_namespace_kwarg(self, adapter: SQLiteLanceVectorAdapter, graph):
+        """IDOR — Security: missing ``namespace_id`` must raise TypeError."""
+        ns = uuid4()
+        e = _make_entity(ns, embedding=_unit(8, 0))
+        await graph.create_entity(e)
+        await adapter.create_entity(e)
+        with pytest.raises(TypeError):
+            await adapter.entity_exists(e.id)  # type: ignore[call-arg]
+
+    async def test_entity_exists_wrong_namespace_returns_false(self, adapter: SQLiteLanceVectorAdapter, graph):
+        """Cross-namespace probes return ``False`` (IDOR family)."""
+        ns = uuid4()
+        e = _make_entity(ns, embedding=_unit(8, 0))
+        await graph.create_entity(e)
+        await adapter.create_entity(e)
+        other_ns = uuid4()
+        assert await adapter.entity_exists(e.id, namespace_id=other_ns) is False
+
+    async def test_update_entity(self, adapter: SQLiteLanceVectorAdapter, graph):
+        ns = uuid4()
+        e = _make_entity(ns, embedding=_unit(8, 0))
+        await graph.create_entity(e)
+        await adapter.create_entity(e)
+
+        e.description = "updated"
+        await graph.update_entity(e, namespace_id=ns)
+        await adapter.update_entity(e, namespace_id=ns)
+
+        # Search should still find it (upsert preserves vector row).
+        results = await adapter.search_similar_entities(ns, _unit(8, 0), limit=5)
+        assert any(eid == e.id for eid, _ in results)
+
+    async def test_update_entity_embedding(self, adapter: SQLiteLanceVectorAdapter, graph):
+        ns = uuid4()
+        e = _make_entity(ns, embedding=_unit(8, 0))
+        await graph.create_entity(e)
+        await adapter.create_entity(e)
+
+        # Change the embedding to point in a different direction.
+        await adapter.update_entity_embedding(e.id, _unit(8, 3), "new-model", namespace_id=ns)
+
+        results = await adapter.search_similar_entities(ns, _unit(8, 3), limit=5)
+        assert results
+        assert results[0][0] == e.id
+        assert math.isclose(results[0][1], 1.0, abs_tol=1e-3)
+
+    async def test_update_entity_embedding_missing_is_silent_noop(self, adapter: SQLiteLanceVectorAdapter):
+        """Security: cross-namespace / missing-entity update is a silent no-op.
+
+        Raising would leak the existence of the row across namespaces (the
+        old behaviour was an existence oracle). The IDOR family preserves
+        ``no-op on cross-namespace`` for every write/update path.
+        """
+        # No exception, no side effects — the LanceDB table is empty,
+        # so a subsequent search returns nothing rather than the bogus row.
+        await adapter.update_entity_embedding(uuid4(), _unit(8, 0), "m", namespace_id=uuid4())
+
+    async def test_update_entity_embeddings_batch(self, adapter: SQLiteLanceVectorAdapter, graph):
+        ns = uuid4()
+        entities = [_make_entity(ns, name=f"e{i}", embedding=_unit(8, 0)) for i in range(3)]
+        for e in entities:
+            await graph.create_entity(e)
+            await adapter.create_entity(e)
+
+        updates = [(e.id, _unit(8, 7), "v2") for e in entities]
+        count = await adapter.update_entity_embeddings_batch(updates, namespace_id=ns)
+        assert count == 3
+
+        results = await adapter.search_similar_entities(ns, _unit(8, 7), limit=5)
+        top_ids = {eid for eid, _ in results}
+        assert {e.id for e in entities}.issubset(top_ids)
+
+    async def test_update_entity_embeddings_batch_empty(self, adapter: SQLiteLanceVectorAdapter):
+        assert await adapter.update_entity_embeddings_batch([], namespace_id=uuid4()) == 0
+
+    async def test_search_similar_entities_min_similarity(self, adapter: SQLiteLanceVectorAdapter, graph):
+        ns = uuid4()
+        a = _make_entity(ns, name="a", embedding=_unit(8, 0))
+        b = _make_entity(ns, name="b", embedding=_unit(8, 1))
+        await graph.create_entity(a)
+        await graph.create_entity(b)
+        await adapter.create_entity(a)
+        await adapter.create_entity(b)
+
+        # Only the self-match clears a 0.5 threshold.
+        results = await adapter.search_similar_entities(ns, _unit(8, 0), min_similarity=0.5)
+        assert len(results) == 1
+
+
+# ---------------------------------------------------------------------------
+# Aggregate ops
+# ---------------------------------------------------------------------------
+
+
+class TestAggregates:
+    async def test_count_and_list(self, adapter: SQLiteLanceVectorAdapter):
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(4)]
+        await adapter.create_chunks_batch(chunks)
+
+        assert await adapter.count_chunks(ns) == 4
+
+        listed = await adapter.list_chunks(ns, limit=2, offset=0)
+        assert len(listed) == 2
+
+        page = await adapter.list_chunks(ns, limit=2, offset=2)
+        assert len(page) == 2
+
+
+# ---------------------------------------------------------------------------
+# Concurrency
+# ---------------------------------------------------------------------------
+
+
+class TestConcurrency:
+    async def test_concurrent_create_chunk(self, adapter: SQLiteLanceVectorAdapter):
+        """Parallel writers should not corrupt SQLite or LanceDB state.
+
+        SQLite + WAL serializes writers, but the adapter itself shouldn't
+        deadlock or drop rows.
+        """
+        ns, doc = uuid4(), uuid4()
+        chunks = [_make_chunk(ns, doc, embedding=_unit(8, i % 8), index=i) for i in range(10)]
+
+        await asyncio.gather(*(adapter.create_chunk(c) for c in chunks))
+
+        assert await adapter.count_chunks(ns) == 10
+        tbl = await adapter._chunks_table()  # type: ignore[reportPrivateUsage]
+        assert await tbl.count_rows() == 10
+
+
+# ---------------------------------------------------------------------------
+# Halfvec
+# ---------------------------------------------------------------------------
+
+
+class TestHalfvec:
+    async def test_halfvec_roundtrip(self, halfvec_handle):
+        adapter = SQLiteLanceVectorAdapter(halfvec_handle)
+        ns, doc = uuid4(), uuid4()
+        await adapter.create_chunks_batch([_make_chunk(ns, doc, embedding=_unit(8, i)) for i in range(3)])
+
+        results = await adapter.search_similar(ns, _unit(8, 0), limit=3)
+        assert results
+        # float16 precision is lossy but cosine similarity to e0 for e0
+        # should still be very near 1.0 for unit basis vectors.
+        assert math.isclose(results[0][1], 1.0, abs_tol=5e-3)

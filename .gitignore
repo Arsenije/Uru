@@ -1,0 +1,8 @@
+# Obsidian plugin build artifacts
+node_modules/
+main.js
+*.js.map
+data.json
+
+# OS
+.DS_Store

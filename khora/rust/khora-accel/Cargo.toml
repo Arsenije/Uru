@@ -1,0 +1,50 @@
+[package]
+name = "khora-accel"
+version = "0.21.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust-accelerated operations for Khora"
+authors = ["AllTheData Inc."]
+license = "Apache-2.0"
+homepage = "https://github.com/DeytaHQ/khora"
+repository = "https://github.com/DeytaHQ/khora"
+
+
+[lib]
+name = "khora_accel"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29" }
+numpy = "0.29"
+ndarray = "0.17"
+rayon = "1.10"
+strsim = "0.11"
+regex = "1.10"
+aho-corasick = "1.1"
+hashbrown = "0.16"
+num_cpus = "1.16"
+ordered-float = "5.0"
+
+[features]
+default = ["parallel"]
+parallel = []
+
+[dev-dependencies]
+criterion = { version = "0.6", features = ["html_reports"] }
+
+[[bench]]
+name = "cosine_bench"
+harness = false
+
+[[bench]]
+name = "bm25_bench"
+harness = false
+
+[[bench]]
+name = "pagerank_bench"
+harness = false
+
+[[bench]]
+name = "block_and_score_pairs"
+harness = false

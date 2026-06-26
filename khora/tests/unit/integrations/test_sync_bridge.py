@@ -1,0 +1,152 @@
+"""Tests for ``khora.integrations._sync.run_sync``.
+
+Happy path, reentrancy refusal, exception propagation, and the
+sync-bridge daemon-thread lifecycle.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import concurrent.futures
+import threading
+
+import pytest
+
+from khora.integrations import _sync
+from khora.integrations._sync import run_sync
+
+
+def test_run_sync_returns_coroutine_result(shutdown_sync_bridge):
+    async def coro() -> int:
+        return 42
+
+    assert run_sync(coro()) == 42
+
+
+def test_run_sync_propagates_exceptions(shutdown_sync_bridge):
+    class _Boom(RuntimeError):
+        pass
+
+    async def coro() -> None:
+        raise _Boom("kaboom")
+
+    with pytest.raises(_Boom, match="kaboom"):
+        run_sync(coro())
+
+
+def test_run_sync_rejects_non_coroutine(shutdown_sync_bridge):
+    with pytest.raises(TypeError):
+        run_sync("not a coroutine")  # type: ignore[arg-type]
+
+
+def test_run_sync_works_from_inside_running_loop(shutdown_sync_bridge):
+    # CrewAI's flow runtime calls our sync StorageBackend from inside
+    # its own asyncio loop. run_sync dispatches to a separate
+    # daemon-thread loop via run_coroutine_threadsafe — the canonical
+    # cross-thread pattern. Not a deadlock as long as the coroutine
+    # itself doesn't have to make progress on the caller's loop.
+    async def coro_inner() -> int:
+        return 1
+
+    async def driver() -> int:
+        return run_sync(coro_inner())
+
+    assert asyncio.run(driver()) == 1
+
+
+def test_run_sync_reuses_loop_across_calls(shutdown_sync_bridge):
+    async def coro(x: int) -> int:
+        return x * 2
+
+    assert run_sync(coro(1)) == 2
+    loop_after_first = _sync._loop
+    assert run_sync(coro(5)) == 10
+    assert _sync._loop is loop_after_first  # reused, not recreated
+
+
+def test_sync_bridge_thread_is_daemon_and_named(shutdown_sync_bridge):
+    async def coro() -> None:
+        return None
+
+    run_sync(coro())
+    assert _sync._loop_thread is not None
+    assert _sync._loop_thread.daemon is True
+    assert _sync._loop_thread.name == "khora-integrations-sync-bridge"
+
+
+def test_run_sync_works_from_worker_thread(shutdown_sync_bridge):
+    # Many adapter call paths land here: a worker thread (FastAPI sync
+    # handler, CrewAI tool) reaching into async khora.
+    results: list[int] = []
+    errors: list[BaseException] = []
+
+    async def coro() -> int:
+        return 7
+
+    def worker() -> None:
+        try:
+            results.append(run_sync(coro()))
+        except BaseException as exc:  # noqa: BLE001 — test recorder
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5.0)
+    assert errors == []
+    assert results == [7, 7, 7, 7]
+
+
+def test_shutdown_for_tests_releases_loop():
+    async def coro() -> None:
+        return None
+
+    run_sync(coro())
+    assert _sync._loop is not None
+    _sync._shutdown_for_tests()
+    assert _sync._loop is None
+    assert _sync._loop_thread is None
+
+
+def test_shutdown_for_tests_cancels_in_flight_coroutine():
+    # A coroutine still running on the bridge loop when _shutdown_for_tests
+    # fires must be cancelled, not orphaned. An orphaned future never
+    # resolves, so run_sync's future.result() blocks forever on a
+    # non-daemon thread and wedges the test worker. The future must resolve
+    # promptly as CANCELLED — a TimeoutError here means the wedge survives.
+    async def _slow() -> int:
+        await asyncio.sleep(30)
+        return 1
+
+    fut = asyncio.run_coroutine_threadsafe(_slow(), _sync._ensure_loop())
+    # Give the coroutine a beat to start running on the bridge loop.
+    asyncio.run(asyncio.sleep(0.1))
+    _sync._shutdown_for_tests()
+    with pytest.raises(concurrent.futures.CancelledError):
+        fut.result(timeout=2.0)
+
+
+def test_run_sync_recovers_after_shutdown():
+    async def coro() -> int:
+        return 99
+
+    run_sync(coro())
+    _sync._shutdown_for_tests()
+    # A fresh call after shutdown rebuilds the loop transparently.
+    assert run_sync(coro()) == 99
+    _sync._shutdown_for_tests()
+
+
+def test_run_sync_cleans_up_after_exception(shutdown_sync_bridge):
+    # An exception inside the coroutine must not leave the bridge in a
+    # broken state — subsequent calls succeed.
+    async def boom() -> None:
+        raise ValueError("fail")
+
+    async def ok() -> int:
+        return 1
+
+    with pytest.raises(ValueError):
+        run_sync(boom())
+    assert run_sync(ok()) == 1
