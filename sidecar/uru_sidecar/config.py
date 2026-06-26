@@ -53,6 +53,10 @@ class SidecarConfig:
     llm_max_concurrent: int = 1
     llm_max_retries: int = 2
 
+    # Self-shutdown if the plugin stops heartbeating (prevents orphaned backends
+    # when Obsidian is force-quit). 0 disables.
+    idle_timeout: int = 120
+
     @property
     def work_dir(self) -> Path:
         return self.db_path.parent / ".uru-runtime"
@@ -73,6 +77,7 @@ class SidecarConfig:
             help="Embeddings-only 'lite' mode (skips LLM entity extraction).",
         )
         p.add_argument("--n-gpu-layers", type=int, default=-1)
+        p.add_argument("--idle-timeout", type=int, default=120)
         ns = p.parse_args(argv)
         return cls(
             port=ns.port,
@@ -84,6 +89,7 @@ class SidecarConfig:
             namespace_id=ns.namespace_id,
             extract_entities=not ns.no_extract_entities,
             n_gpu_layers=ns.n_gpu_layers,
+            idle_timeout=ns.idle_timeout,
         )
 
     def khora_env(self, openai_base: str) -> dict[str, str]:

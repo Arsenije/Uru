@@ -6,6 +6,12 @@ import { HashStore } from "./hashStore";
 
 const DEBOUNCE_MS = 1_500;
 
+export interface IndexStatus {
+	done: number;
+	total: number;
+	current: string;
+}
+
 /** Compile a single glob (`**`, `*`, `?`) to a RegExp anchored to the full path. */
 function globToRegExp(glob: string): RegExp {
 	let re = "";
@@ -30,15 +36,26 @@ export class Indexer {
 	private ignore: RegExp[] = [];
 	private pending = new Map<string, ReturnType<typeof setTimeout>>();
 	private indexing = false;
+	private cancelRequested = false;
 
 	constructor(
 		private app: App,
 		private client: () => SidecarClient | null,
 		private settings: UruSettings,
 		statePath: string,
+		private onIndexStatus: (s: IndexStatus | null) => void = () => {},
 	) {
 		this.store = new HashStore(app.vault.adapter, statePath);
 		this.recompileIgnore();
+	}
+
+	get isIndexing(): boolean {
+		return this.indexing;
+	}
+
+	/** Request the in-progress full index to stop after the current note. */
+	stop(): void {
+		if (this.indexing) this.cancelRequested = true;
 	}
 
 	async load(): Promise<void> {
@@ -93,6 +110,7 @@ export class Indexer {
 			return;
 		}
 		this.indexing = true;
+		this.cancelRequested = false;
 		const notice = new Notice("Uru: indexing…", 0);
 		try {
 			const files = this.app.vault.getMarkdownFiles().filter((f) => !this.isIgnored(f.path));
@@ -127,7 +145,13 @@ export class Indexer {
 			// Obsidian renderer and gives per-note progress + doc-id capture.
 			let done = 0;
 			let failed = 0;
+			let stopped = false;
 			for (const doc of docs) {
+				if (this.cancelRequested) {
+					stopped = true;
+					break;
+				}
+				this.onIndexStatus({ done, total: docs.length, current: doc.title ?? doc.external_id });
 				notice.setMessage(`Uru: indexing ${done + 1}/${docs.length} — ${doc.title}`);
 				try {
 					const res = await client.remember(doc);
@@ -144,13 +168,17 @@ export class Indexer {
 			}
 			await this.store.save();
 			notice.setMessage(
-				`Uru: indexed ${done - failed}/${docs.length} notes` +
-					(failed ? ` (${failed} failed)` : ""),
+				stopped
+					? `Uru: stopped at ${done}/${docs.length}`
+					: `Uru: indexed ${done - failed}/${docs.length} notes` +
+							(failed ? ` (${failed} failed)` : ""),
 			);
 		} catch (e) {
 			notice.setMessage(`Uru: index failed — ${(e as Error).message}`);
 		} finally {
 			this.indexing = false;
+			this.cancelRequested = false;
+			this.onIndexStatus(null);
 			setTimeout(() => notice.hide(), 4_000);
 		}
 	}

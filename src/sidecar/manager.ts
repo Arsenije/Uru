@@ -50,6 +50,7 @@ export class SidecarManager {
 	private restartAttempts = 0;
 	private stderrRing: string[] = [];
 	private listeners: StatusListener[] = [];
+	private heartbeat: ReturnType<typeof setInterval> | null = null;
 	client: SidecarClient | null = null;
 
 	constructor(private spec: SidecarLaunchSpec) {}
@@ -68,12 +69,7 @@ export class SidecarManager {
 
 	/** Spawn the sidecar and resolve once /health reports a terminal state. */
 	async start(): Promise<HealthResponse> {
-		if (this.lockHeldByLiveProcess()) {
-			throw new Error(
-				"Another Uru sidecar is already running for this vault (lockfile present). " +
-					"Close other windows of this vault or remove the lockfile.",
-			);
-		}
+		this.takeOverExisting(); // kill any prior sidecar group from a stale lock
 		this.stoppedByUs = false;
 		this.port = await pickPort();
 		this.token = randomUUID();
@@ -87,19 +83,75 @@ export class SidecarManager {
 			"--chat-model", this.spec.chatModelPath,
 			"--embed-model", this.spec.embedModelPath,
 			"--embedding-dimension", String(this.spec.embeddingDimension),
+			"--idle-timeout", "120",
 		];
 		if (this.spec.namespaceId) args.push("--namespace-id", this.spec.namespaceId);
 		if (!this.spec.extractEntities) args.push("--no-extract-entities");
 
 		this.emit("starting", "launching backend");
+		// detached: the sidecar leads its own process group, so killing -pid takes
+		// down the sidecar AND its llama.cpp children together (no orphans).
 		this.proc = spawn(this.spec.pythonPath, args, {
 			cwd: this.spec.cwd,
 			env: { ...process.env, URU_TOKEN: this.token, PYTHONPATH: this.spec.cwd },
+			detached: true,
 		});
 		this.writeLock();
 		this.wireProcessEvents();
 
-		return this.awaitReady();
+		const health = await this.awaitReady();
+		this.startHeartbeat();
+		return health;
+	}
+
+	/** Kill an entire sidecar process group (sidecar + llama children). */
+	private killGroup(signal: NodeJS.Signals): void {
+		const pid = this.proc?.pid;
+		if (!pid) return;
+		try {
+			process.kill(-pid, signal);
+		} catch {
+			try {
+				process.kill(pid, signal);
+			} catch {
+				/* already gone */
+			}
+		}
+	}
+
+	/** On startup, terminate a leftover sidecar recorded in the lockfile. */
+	private takeOverExisting(): void {
+		if (!existsSync(this.spec.lockPath)) return;
+		try {
+			const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8"));
+			if (typeof pid === "number") {
+				try {
+					process.kill(-pid, "SIGKILL"); // whole group (new detached layout)
+				} catch {
+					try {
+						process.kill(pid, "SIGKILL"); // pre-detached fallback
+					} catch {
+						/* already gone */
+					}
+				}
+			}
+		} catch {
+			/* unreadable lock */
+		}
+		this.clearLock();
+	}
+
+	private startHeartbeat(): void {
+		this.stopHeartbeat();
+		// Keeps the sidecar's idle watchdog from self-terminating us.
+		this.heartbeat = setInterval(() => void this.client?.health(), 30_000);
+	}
+
+	private stopHeartbeat(): void {
+		if (this.heartbeat) {
+			clearInterval(this.heartbeat);
+			this.heartbeat = null;
+		}
 	}
 
 	private wireProcessEvents(): void {
@@ -156,14 +208,16 @@ export class SidecarManager {
 		}
 	}
 
-	/** Graceful shutdown: ask the sidecar to flush + exit, then force-kill. */
+	/** Graceful shutdown: ask the sidecar to flush + exit, then kill the group. */
 	async stop(): Promise<void> {
 		this.stoppedByUs = true;
+		this.stopHeartbeat();
 		if (this.client) await this.client.shutdown();
 		const proc = this.proc;
 		if (proc && proc.exitCode === null) {
 			const exited = new Promise<void>((res) => proc.once("exit", () => res()));
-			const timer = setTimeout(() => proc.kill("SIGKILL"), 5_000);
+			this.killGroup("SIGTERM");
+			const timer = setTimeout(() => this.killGroup("SIGKILL"), 4_000);
 			await exited;
 			clearTimeout(timer);
 		}
@@ -185,19 +239,6 @@ export class SidecarManager {
 			if (existsSync(this.spec.lockPath)) unlinkSync(this.spec.lockPath);
 		} catch {
 			/* ignore */
-		}
-	}
-
-	private lockHeldByLiveProcess(): boolean {
-		if (!existsSync(this.spec.lockPath)) return false;
-		try {
-			const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8"));
-			if (typeof pid !== "number") return false;
-			process.kill(pid, 0); // throws if the pid is gone
-			return true;
-		} catch {
-			this.clearLock(); // stale lock
-			return false;
 		}
 	}
 }

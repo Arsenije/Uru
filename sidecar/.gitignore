@@ -6,6 +6,7 @@
 .smoke-mxbai/
 .idx-test/
 .bigdoc-test/
+.wiki-src/
 *.log
 __pycache__/
 *.pyc

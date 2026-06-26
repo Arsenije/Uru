@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Any, Callable
 
 from .config import SidecarConfig
@@ -24,6 +25,7 @@ class SidecarRuntime:
         self.status = "starting"
         self.error: str | None = None
         self.namespace_id: str | None = None
+        self.last_activity = time.monotonic()
         self._kb: Any = None
         self._chat: LlamaServer | None = None
         self._embed: LlamaServer | None = None
@@ -109,6 +111,13 @@ class SidecarRuntime:
             self._chat.stop()
         if self._embed:
             self._embed.stop()
+
+    def touch(self) -> None:
+        """Record activity; resets the idle-shutdown watchdog."""
+        self.last_activity = time.monotonic()
+
+    def idle_seconds(self) -> float:
+        return time.monotonic() - self.last_activity
 
     # ---- operations ------------------------------------------------------
 

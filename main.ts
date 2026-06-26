@@ -13,7 +13,7 @@ import { DEFAULT_SETTINGS, UruSettingTab, type UruSettings } from "./src/setting
 import { ensureBackend, type BackendPaths } from "./src/bootstrap/uv";
 import { SidecarManager } from "./src/sidecar/manager";
 import type { SidecarClient, HealthResponse } from "./src/sidecar/client";
-import { Indexer } from "./src/indexing/indexer";
+import { Indexer, type IndexStatus } from "./src/indexing/indexer";
 import { RecallView, URU_RECALL_VIEW } from "./src/views/recallView";
 
 export default class UruPlugin extends Plugin {
@@ -22,6 +22,7 @@ export default class UruPlugin extends Plugin {
 	private indexer: Indexer | null = null;
 	private status: HealthResponse["status"] | "uninstalled" = "uninstalled";
 	private statusDetail = "";
+	private indexStatus: IndexStatus | null = null;
 	private statusBar!: HTMLElement;
 	private eventOffs: Array<() => void> = [];
 
@@ -43,6 +44,18 @@ export default class UruPlugin extends Plugin {
 			id: "uru-index-vault",
 			name: "Index vault",
 			callback: () => this.indexVault(),
+		});
+		this.addCommand({
+			id: "uru-stop-indexing",
+			name: "Stop indexing",
+			checkCallback: (checking) => {
+				const active = this.indexer?.isIndexing ?? false;
+				if (active && !checking) {
+					this.indexer?.stop();
+					new Notice("Uru: stopping after the current note…");
+				}
+				return active;
+			},
 		});
 		this.addCommand({
 			id: "uru-restart-backend",
@@ -135,7 +148,16 @@ export default class UruPlugin extends Plugin {
 
 	private async startIndexer(): Promise<void> {
 		const statePath = `${this.manifest.dir}/index-state.json`;
-		this.indexer = new Indexer(this.app, () => this.client(), this.settings, statePath);
+		this.indexer = new Indexer(
+			this.app,
+			() => this.client(),
+			this.settings,
+			statePath,
+			(s) => {
+				this.indexStatus = s;
+				this.renderStatusBar();
+			},
+		);
 		await this.indexer.load();
 		this.indexer.registerVaultEvents((off) => this.eventOffs.push(off));
 		if (this.settings.autoIndexOnStartup) void this.indexer.fullIndex(false);
@@ -187,7 +209,17 @@ export default class UruPlugin extends Plugin {
 	private setStatus(status: typeof this.status, detail: string): void {
 		this.status = status;
 		this.statusDetail = detail;
-		const icon = status === "ok" ? "✓" : status === "error" ? "✕" : "…";
+		this.renderStatusBar();
+	}
+
+	private renderStatusBar(): void {
+		if (this.indexStatus) {
+			const { done, total, current } = this.indexStatus;
+			this.statusBar.setText(`Uru ⏳ ${done}/${total}`);
+			this.statusBar.title = `Uru: indexing ${current}\n(run "Uru: Stop indexing" to cancel)`;
+			return;
+		}
+		const icon = this.status === "ok" ? "✓" : this.status === "error" ? "✕" : "…";
 		this.statusBar.setText(`Uru ${icon}`);
 		this.statusBar.title = `Uru: ${this.statusText()}`;
 	}

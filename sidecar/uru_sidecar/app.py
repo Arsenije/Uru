@@ -35,6 +35,11 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
     )
     token = runtime.config.token
 
+    @app.middleware("http")
+    async def _track_activity(request, call_next):
+        runtime.touch()  # any request resets the idle watchdog
+        return await call_next(request)
+
     def require_auth(authorization: str = Header(default="")) -> None:
         if not token:  # no token configured -> open (dev only)
             return

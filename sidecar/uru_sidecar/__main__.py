@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -33,13 +35,27 @@ def main() -> None:
             runtime.status = "error"
             runtime.error = str(exc)
 
+    async def watchdog() -> None:
+        timeout = config.idle_timeout
+        if timeout <= 0:
+            return
+        while True:
+            await asyncio.sleep(min(15, timeout))
+            if runtime.status == "ok" and runtime.idle_seconds() > timeout:
+                log.warning("idle %.0fs > %ds — shutting down", runtime.idle_seconds(), timeout)
+                await runtime.stop()
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
+
     @asynccontextmanager
     async def lifespan(app):
         boot_task = asyncio.create_task(boot())
+        dog_task = asyncio.create_task(watchdog())
         try:
             yield
         finally:
             boot_task.cancel()
+            dog_task.cancel()
             if runtime.status != "stopping":
                 await runtime.stop()
 
