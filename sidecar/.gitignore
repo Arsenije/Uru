@@ -5,6 +5,7 @@
 .smoke-work/
 .smoke-mxbai/
 .idx-test/
+.bigdoc-test/
 *.log
 __pycache__/
 *.pyc

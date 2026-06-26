@@ -46,6 +46,13 @@ class SidecarConfig:
     n_gpu_layers: int = -1
     host: str = "127.0.0.1"
 
+    # Local-inference tuning. llama.cpp serves one request at a time, so firing
+    # khora's default 10 concurrent extraction calls makes them queue and blow
+    # the 30s timeout (retry storm → hang). Serialize and give each call room.
+    llm_timeout: int = 300
+    llm_max_concurrent: int = 1
+    llm_max_retries: int = 2
+
     @property
     def work_dir(self) -> Path:
         return self.db_path.parent / ".uru-runtime"
@@ -91,5 +98,9 @@ class SidecarConfig:
             "KHORA_LLM_MODEL": "openai/uru-chat",
             "KHORA_LLM_EMBEDDING_MODEL": "openai/uru-embed",
             "KHORA_LLM_EMBEDDING_DIMENSION": str(self.embedding_dimension),
+            "KHORA_LLM_TIMEOUT": str(self.llm_timeout),
+            "KHORA_LLM_MAX_CONCURRENT_LLM_CALLS": str(self.llm_max_concurrent),
+            "KHORA_LLM_EXTRACTION_WAVE_SIZE": str(self.llm_max_concurrent),
+            "KHORA_LLM_MAX_RETRIES": str(self.llm_max_retries),
             "KHORA_PIPELINES_EXTRACT_ENTITIES": "true" if self.extract_entities else "false",
         }
