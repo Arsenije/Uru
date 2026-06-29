@@ -1,14 +1,17 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
 import type UruPlugin from "../../main";
-import type { ChatCitation, ChatMessage } from "../sidecar/client";
+import type { ChatCitation, ChatMessage, NoteContext } from "../sidecar/client";
 
 export const URU_CHAT_VIEW = "uru-chat-view";
+
+type ChatScope = "vault" | "note";
 
 export class ChatView extends ItemView {
 	private messagesEl!: HTMLElement;
 	private input!: HTMLTextAreaElement;
 	private history: ChatMessage[] = [];
 	private busy = false;
+	private chatScope: ChatScope = "vault";
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -33,7 +36,18 @@ export class ChatView extends ItemView {
 		root.addClass("uru-chat");
 
 		const header = root.createDiv({ cls: "uru-chat-header" });
-		header.createEl("span", { text: "Chat with your vault" });
+		// Scope switch — Vault (default) vs Current note.
+		const scopeBar = header.createDiv({ cls: "uru-chat-scope" });
+		const vaultBtn = scopeBar.createEl("button", { text: "Vault", cls: "uru-scope-btn is-active" });
+		const noteBtn = scopeBar.createEl("button", { text: "Current note", cls: "uru-scope-btn" });
+		const setScope = (s: ChatScope) => {
+			this.chatScope = s;
+			vaultBtn.toggleClass("is-active", s === "vault");
+			noteBtn.toggleClass("is-active", s === "note");
+		};
+		vaultBtn.addEventListener("click", () => setScope("vault"));
+		noteBtn.addEventListener("click", () => setScope("note"));
+
 		header.createEl("button", { text: "New chat", cls: "uru-chat-new" }).addEventListener(
 			"click",
 			() => this.reset(),
@@ -91,6 +105,19 @@ export class ChatView extends ItemView {
 			new Notice("Uru backend not ready");
 			return;
 		}
+
+		// 'Current note' scope: feed the active note's text as context.
+		let note: NoteContext | undefined;
+		if (this.chatScope === "note") {
+			const file = this.plugin.app.workspace.getActiveFile();
+			if (!file) {
+				new Notice("Open a note to chat about it");
+				return;
+			}
+			const content = await this.plugin.app.vault.cachedRead(file);
+			note = { external_id: file.path, title: file.basename, content };
+		}
+
 		this.busy = true;
 		this.input.value = "";
 
@@ -105,7 +132,7 @@ export class ChatView extends ItemView {
 			// Prefer streaming; fall back to a single non-streaming call if the
 			// renderer blocks fetch streaming.
 			try {
-				for await (const ev of client.chatStream(query, historySnapshot)) {
+				for await (const ev of client.chatStream(query, historySnapshot, note)) {
 					if (ev.event === "sources") {
 						citations = ev.citations;
 					} else if (ev.event === "token") {
@@ -115,7 +142,7 @@ export class ChatView extends ItemView {
 					}
 				}
 			} catch {
-				const res = await client.chatSync(query, historySnapshot);
+				const res = await client.chatSync(query, historySnapshot, note);
 				answer = res.answer;
 				citations = res.citations;
 			}

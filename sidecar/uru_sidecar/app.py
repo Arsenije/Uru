@@ -69,11 +69,12 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
     @app.post("/chat", dependencies=[Depends(require_auth)])
     async def chat(req: ChatRequest):
         history = [m.model_dump() for m in req.history]
+        note = req.note.model_dump() if req.note else None
         if not req.stream:
-            return await runtime.chat_once(req.query, history, req.limit)
+            return await runtime.chat_once(req.query, history, req.limit, note)
 
         async def stream():
-            async for ev in runtime.chat_stream(req.query, history, req.limit):
+            async for ev in runtime.chat_stream(req.query, history, req.limit, note):
                 yield json.dumps(ev) + "\n"
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")

@@ -85,6 +85,13 @@ export interface ChatMessage {
 	content: string;
 }
 
+/** Explicit context for 'current note' chat scope. */
+export interface NoteContext {
+	external_id: string;
+	title: string;
+	content: string;
+}
+
 export type ChatEvent =
 	| { event: "sources"; citations: ChatCitation[] }
 	| { event: "token"; text: string }
@@ -142,11 +149,15 @@ export class SidecarClient {
 	 * Streaming chat (RAG). Yields sources, then answer tokens. Uses fetch for
 	 * the streaming body; callers should fall back to chatSync() if it throws.
 	 */
-	async *chatStream(query: string, history: ChatMessage[]): AsyncGenerator<ChatEvent> {
+	async *chatStream(
+		query: string,
+		history: ChatMessage[],
+		note?: NoteContext,
+	): AsyncGenerator<ChatEvent> {
 		const resp = await fetch(`${this.baseUrl}/chat`, {
 			method: "POST",
 			headers: { "content-type": "application/json", ...this.authHeader },
-			body: JSON.stringify({ query, history, stream: true }),
+			body: JSON.stringify({ query, history, stream: true, note }),
 		});
 		if (!resp.ok || !resp.body) throw new Error(`chat failed: HTTP ${resp.status}`);
 		const reader = resp.body.getReader();
@@ -167,8 +178,8 @@ export class SidecarClient {
 	}
 
 	/** Non-streaming chat via requestUrl (fallback when fetch streaming is blocked). */
-	async chatSync(query: string, history: ChatMessage[]): Promise<ChatResult> {
-		return this.post<ChatResult>("/chat", { query, history, stream: false });
+	async chatSync(query: string, history: ChatMessage[], note?: NoteContext): Promise<ChatResult> {
+		return this.post<ChatResult>("/chat", { query, history, stream: false, note });
 	}
 
 	async shutdown(): Promise<void> {

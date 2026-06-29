@@ -171,7 +171,13 @@ class SidecarRuntime:
         "not contain the answer, say you couldn't find it in the vault."
     )
 
-    async def _chat_context(self, query: str, limit: int):
+    async def _chat_context(self, query: str, limit: int, note: dict | None = None):
+        # 'Current note' scope: use the note text directly, no vault recall.
+        if note:
+            content = (note.get("content") or "")[:16000]  # keep within chat n_ctx
+            label = note.get("title") or note.get("external_id") or "current note"
+            citation = {"index": 1, "external_id": note.get("external_id"), "title": label}
+            return f"[1] {label}\n{content}", [citation]
         res = await self.recall(query, limit=limit)
         docs = {d.id: d for d in res.documents}
         blocks: list[str] = []
@@ -194,10 +200,10 @@ class SidecarRuntime:
         msgs.append({"role": "user", "content": f"Context notes:\n\n{context}\n\n---\nQuestion: {query}"})
         return msgs
 
-    async def chat_once(self, query: str, history=None, limit: int = 8) -> dict:
+    async def chat_once(self, query: str, history=None, limit: int = 8, note: dict | None = None) -> dict:
         import litellm
 
-        context, citations = await self._chat_context(query, limit)
+        context, citations = await self._chat_context(query, limit, note)
         resp = await litellm.acompletion(
             model="openai/uru-chat",
             messages=self._chat_messages(query, context, history),
@@ -206,10 +212,10 @@ class SidecarRuntime:
         answer = (resp.choices[0].message.content or "") if resp.choices else ""
         return {"answer": answer, "citations": citations}
 
-    async def chat_stream(self, query: str, history=None, limit: int = 8):
+    async def chat_stream(self, query: str, history=None, limit: int = 8, note: dict | None = None):
         import litellm
 
-        context, citations = await self._chat_context(query, limit)
+        context, citations = await self._chat_context(query, limit, note)
         yield {"event": "sources", "citations": citations}
         stream = await litellm.acompletion(
             model="openai/uru-chat",

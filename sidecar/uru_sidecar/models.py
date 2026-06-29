@@ -39,8 +39,17 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class NoteContext(BaseModel):
+    """Explicit context for 'current note' chat scope (skips vault recall)."""
+
+    external_id: str | None = None
+    title: str | None = None
+    content: str
+
+
 class ChatRequest(BaseModel):
     query: str
     history: list[ChatMessage] = Field(default_factory=list)
     limit: int = 8
     stream: bool = True
+    note: NoteContext | None = None

@@ -80,7 +80,19 @@ def main() -> int:
                     toks.append(ev["text"])
         print("sources:", sources)
         print("streamed answer:", "".join(toks)[:300])
-        ok = bool(r["answer"]) and bool(toks) and bool(r["citations"])
+        print("\n--- current-note scope (no recall) ---")
+        note = {
+            "external_id": "Secret.md", "title": "Secret",
+            "content": "The passphrase for the vault is 'open-sesame-1971'.",
+        }
+        rn = httpx.post(f"{base}/chat", headers=auth,
+                        json={"query": "What is the passphrase?", "stream": False, "note": note},
+                        timeout=300).json()
+        print("note answer:", rn["answer"][:200])
+        print("note citations:", rn["citations"])
+        note_ok = "1971" in rn["answer"] and rn["citations"][0]["external_id"] == "Secret.md"
+
+        ok = bool(r["answer"]) and bool(toks) and bool(r["citations"]) and note_ok
         print("\nCHAT PASS" if ok else "\nCHAT FAIL")
         return 0 if ok else 1
     finally:

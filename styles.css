@@ -78,6 +78,26 @@
 .uru-chat-new {
 	font-size: var(--font-ui-smaller);
 }
+.uru-chat-scope {
+	display: inline-flex;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	overflow: hidden;
+}
+.uru-scope-btn {
+	font-size: var(--font-ui-smaller);
+	padding: 0.15rem 0.55rem;
+	border: none;
+	border-radius: 0;
+	box-shadow: none;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	cursor: pointer;
+}
+.uru-scope-btn.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
 .uru-chat-messages {
 	flex: 1;
 	overflow-y: auto;
