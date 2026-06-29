@@ -134,14 +134,25 @@ export class Indexer {
 				}
 			}
 
-			// Changed/new notes only (hash gate).
-			const docs: BatchDocument[] = [];
+			// Changed/new notes only (content-hash gate), plus notes whose
+			// extraction mode changed (Lite ↔ Full). khora dedups by content
+			// checksum and skips already-COMPLETED docs, so re-sending a note with
+			// unchanged content is a no-op — to genuinely re-extract we drop the
+			// existing doc first (forgetFirst) so khora re-ingests it from scratch.
+			const mode = this.settings.extractEntities;
+			const docs: Array<{ doc: BatchDocument; forgetFirst: boolean }> = [];
 			for (const file of files) {
 				const doc = await this.toDocument(file);
 				if (!doc) continue;
 				const h = doc.metadata!.hash as string;
-				if (!force && this.store.isUnchanged(file.path, h)) continue;
-				docs.push(doc);
+				const known = this.store.get(file.path);
+				const contentSame = known?.hash === h;
+				// Legacy entries (mode undefined) are treated as matching, so an
+				// upgrade doesn't trigger a surprise full re-extraction.
+				const modeSame = known?.extractEntities === undefined || known.extractEntities === mode;
+				if (!force && contentSame && modeSame) continue;
+				const forgetFirst = !!known && contentSame && (force || !modeSame);
+				docs.push({ doc, forgetFirst });
 			}
 
 			if (docs.length === 0) {
@@ -155,18 +166,20 @@ export class Indexer {
 			let failed = 0;
 			let stopped = false;
 			const failures: string[] = [];
-			for (const doc of docs) {
+			for (const { doc, forgetFirst } of docs) {
 				if (this.cancelRequested) {
 					stopped = true;
 					break;
 				}
 				this.onIndexStatus({ done, total: docs.length, current: doc.title ?? doc.external_id });
 				try {
+					if (forgetFirst) await client.forget(doc.external_id).catch(() => undefined);
 					const res = await client.remember(doc);
 					this.store.set(doc.external_id, {
 						hash: doc.metadata!.hash as string,
 						docId: res.document_id,
 						lastIndexed: Date.now(),
+						extractEntities: mode,
 					});
 				} catch (e) {
 					failed++;
@@ -235,7 +248,12 @@ export class Indexer {
 		if (this.store.isUnchanged(file.path, h)) return;
 		try {
 			const res = await client.remember(doc);
-			this.store.set(file.path, { hash: h, docId: res.document_id, lastIndexed: Date.now() });
+			this.store.set(file.path, {
+				hash: h,
+				docId: res.document_id,
+				lastIndexed: Date.now(),
+				extractEntities: this.settings.extractEntities,
+			});
 			await this.store.save();
 		} catch {
 			/* surfaced via status; will retry on next change */

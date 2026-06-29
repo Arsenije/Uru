@@ -23,12 +23,20 @@ export interface BootstrapContext {
 // Pinned versions.
 const UV_VERSION = "0.11.4";
 const LLAMA_BUILD = "b9838";
+// Pinned khora release — keep in sync with sidecar/pyproject.toml. The dev
+// fast-path verifies the repo-local venv matches this before reusing it, so a
+// stale editable checkout can't silently stand in for the shipped version.
+const KHORA_VERSION = "0.21.0";
 
 // Models. The embedding model fixes the vector dimension.
 const CHAT_REPO = "bartowski/Qwen2.5-3B-Instruct-GGUF";
 const CHAT_GGUF = "Qwen2.5-3B-Instruct-Q4_K_M.gguf";
+// Revision-pinned so a repo update can't silently swap the weights underneath us
+// (the embedding model also fixes the vector dimension — drift would corrupt it).
+const CHAT_REVISION = "f302c64a2269a69fb27b2f9473b362f5bb8e78d8";
 const EMBED_REPO = "mixedbread-ai/mxbai-embed-large-v1";
 const EMBED_FILE = "gguf/mxbai-embed-large-v1-f16.gguf";
+const EMBED_REVISION = "b33106f585b9ce46904ad7443a3b52b7a63e231c";
 const EMBED_CANDIDATES: Array<{ file: string; dim: number }> = [
 	{ file: EMBED_FILE, dim: 1024 }, // mxbai-embed-large-v1
 	{ file: "nomic-embed-text-v1.5.f16.gguf", dim: 768 }, // dev cache fallback
@@ -56,6 +64,37 @@ function run(
 			code === 0 ? resolve() : reject(new Error(`${cmd} ${args[0]} exited ${code}`)),
 		);
 	});
+}
+
+/** Run a command and resolve with its exit code + combined output (never rejects). */
+function capture(cmd: string, args: string[]): Promise<{ code: number; out: string }> {
+	return new Promise((resolve) => {
+		const p = spawn(cmd, args);
+		let out = "";
+		const cap = (b: Buffer) => (out += b.toString());
+		p.stdout.on("data", cap);
+		p.stderr.on("data", cap);
+		p.on("error", () => resolve({ code: -1, out }));
+		p.on("exit", (code) => resolve({ code: code ?? -1, out }));
+	});
+}
+
+/**
+ * Probe a venv for a healthy install: all three packages importable, and report
+ * the installed khora version. Returns null if the interpreter is missing or any
+ * import fails — i.e. a partial/failed install that needs repair.
+ */
+async function probeKhoraVersion(py: string): Promise<string | null> {
+	if (!existsSync(py)) return null;
+	// Sentinel-prefix the version so we can pluck it out regardless of any
+	// import-time log noise khora writes to stdout/stderr.
+	const { code, out } = await capture(py, [
+		"-c",
+		"import uru_sidecar, huggingface_hub, khora; print('KHORA_PROBE=' + khora.__version__)",
+	]);
+	if (code !== 0) return null;
+	const m = out.match(/KHORA_PROBE=(\S+)/);
+	return m ? m[1] : null;
 }
 
 async function download(url: string, dest: string): Promise<void> {
@@ -184,13 +223,22 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 	const { pluginSidecarDir, runtimeDir, log } = ctx;
 	mkdirSync(runtimeDir, { recursive: true });
 
-	// 1) Dev fast path — everything cached in the repo.
+	// 1) Dev fast path — everything cached in the repo. Only reuse it if the
+	// repo-local venv actually has the pinned khora version; otherwise a stale
+	// editable checkout would silently stand in for the shipped backend.
 	const devPy = venvPython(join(pluginSidecarDir, ".venv"));
 	const devModels = findModels(join(pluginSidecarDir, ".models"));
 	const devLlama = findFile(join(pluginSidecarDir, ".llamacpp-test"), "llama-server");
 	if (existsSync(devPy) && devModels && devLlama) {
-		log("Using repo-local dev backend.");
-		return { pythonPath: devPy, sidecarCwd: pluginSidecarDir, llamaServerBin: devLlama, ...devModels };
+		const devVersion = await probeKhoraVersion(devPy);
+		if (devVersion === KHORA_VERSION) {
+			log("Using repo-local dev backend.");
+			return { pythonPath: devPy, sidecarCwd: pluginSidecarDir, llamaServerBin: devLlama, ...devModels };
+		}
+		log(
+			`Repo-local dev backend skipped (khora ${devVersion ?? "missing"} != pinned ${KHORA_VERSION}); ` +
+				"bootstrapping app-data backend.",
+		);
 	}
 
 	// 2) Full bootstrap into app-data.
@@ -203,8 +251,19 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 		await run(uv, ["python", "install", "3.13"], { env }, log);
 		log("Creating virtual environment…");
 		await run(uv, ["venv", "--python", "3.13", venvDir], { env }, log);
+	}
+	// Verify the deps are actually importable — don't gate on the interpreter
+	// existing. If a previous run created the venv but died before/at pip
+	// install, the binary exists yet the packages don't; reinstall to repair
+	// instead of skipping and shipping a broken backend on every retry.
+	if ((await probeKhoraVersion(py)) === null) {
 		log("Installing khora + sidecar…");
 		await run(uv, ["pip", "install", "--python", py, pluginSidecarDir], { env }, log);
+		if ((await probeKhoraVersion(py)) === null) {
+			throw new Error(
+				"backend dependencies missing after install — `import uru_sidecar/khora/huggingface_hub` failed; check diagnostics.",
+			);
+		}
 	}
 
 	const llamaServerBin = await ensureLlamaServer(runtimeDir, log);
@@ -219,8 +278,8 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 				"-c",
 				[
 					"from huggingface_hub import hf_hub_download as d",
-					`d(${JSON.stringify(CHAT_REPO)}, ${JSON.stringify(CHAT_GGUF)}, local_dir=${JSON.stringify(modelsDir)})`,
-					`d(${JSON.stringify(EMBED_REPO)}, ${JSON.stringify(EMBED_FILE)}, local_dir=${JSON.stringify(modelsDir)})`,
+					`d(${JSON.stringify(CHAT_REPO)}, ${JSON.stringify(CHAT_GGUF)}, revision=${JSON.stringify(CHAT_REVISION)}, local_dir=${JSON.stringify(modelsDir)})`,
+					`d(${JSON.stringify(EMBED_REPO)}, ${JSON.stringify(EMBED_FILE)}, revision=${JSON.stringify(EMBED_REVISION)}, local_dir=${JSON.stringify(modelsDir)})`,
 				].join("; "),
 			],
 			{ env },

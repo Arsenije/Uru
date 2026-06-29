@@ -51,11 +51,13 @@ def main() -> None:
     async def lifespan(app):
         boot_task = asyncio.create_task(boot())
         dog_task = asyncio.create_task(watchdog())
+        sup_task = asyncio.create_task(runtime.run_supervisor())
         try:
             yield
         finally:
             boot_task.cancel()
             dog_task.cancel()
+            sup_task.cancel()
             if runtime.status != "stopping":
                 await runtime.stop()
 

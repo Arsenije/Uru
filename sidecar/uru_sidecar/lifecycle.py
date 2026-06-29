@@ -135,15 +135,50 @@ class SidecarRuntime:
 
     async def health(self) -> dict[str, Any]:
         kb_health = await self._kb.health_check() if self._kb else {"status": "disconnected"}
+        chat_alive = self._chat.is_alive() if self._chat else False
+        embed_alive = self._embed.is_alive() if self._embed else False
+        status = self.status
+        error = self.error
+        # Don't report "ok" while an inference child is down — otherwise the
+        # plugin shows a healthy badge while chat/recall/indexing silently fail.
+        if status == "ok" and not (chat_alive and embed_alive):
+            down = [n for n, a in (("chat", chat_alive), ("embed", embed_alive)) if not a]
+            status = "error"
+            error = error or f"inference server(s) down: {', '.join(down)}"
         return {
-            "status": self.status,
-            "error": self.error,
+            "status": status,
+            "error": error,
             "namespace_id": self.namespace_id,
             "backend": "sqlite_lance",
             "extract_entities": self.config.extract_entities,
             "models": {"chat": "uru-chat", "embed": "uru-embed"},
+            "inference": {"chat": chat_alive, "embed": embed_alive},
             "khora": kb_health,
         }
+
+    async def run_supervisor(self, interval: float = 5.0) -> None:
+        """Restart any llama child that dies after startup.
+
+        ``wait_ready`` / process polling only run at boot; without this loop a
+        crashed chat or embed server stays dead while ``/health`` (now liveness
+        aware) reports the outage. We restart in place (same port, proxy URL
+        unchanged) and latch to ``error`` only if a restart itself fails.
+        """
+        while True:
+            await asyncio.sleep(interval)
+            if self.status != "ok":
+                continue
+            for server in (self._chat, self._embed):
+                if server is None or server.is_alive():
+                    continue
+                log.error("llama-server '%s' exited; restarting", server.alias)
+                try:
+                    await asyncio.to_thread(server.restart)
+                    log.info("llama-server '%s' back up", server.alias)
+                except Exception as exc:  # noqa: BLE001 — surface via /health, keep serving
+                    log.exception("restart of llama-server '%s' failed", server.alias)
+                    self.status = "error"
+                    self.error = f"{server.alias} crashed and could not be restarted: {exc}"
 
     async def recall(self, query: str, *, limit: int = 10, min_similarity: float = 0.0) -> Any:
         return await self._kb.recall(

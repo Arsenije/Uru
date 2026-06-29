@@ -8,6 +8,8 @@ export interface HealthResponse {
 	backend: string;
 	extract_entities: boolean;
 	models: { chat: string; embed: string };
+	/** Live liveness of the two llama children; absent on older sidecars. */
+	inference?: { chat: boolean; embed: boolean };
 	khora: Record<string, unknown>;
 }
 

@@ -102,6 +102,20 @@ class LlamaServer:
             f"llama-server '{self.alias}' not ready in {timeout}s:\n{self.log_tail()}"
         )
 
+    def is_alive(self) -> bool:
+        """True while the child process is running."""
+        return self._proc is not None and self._proc.poll() is None
+
+    def restart(self) -> None:
+        """Re-spawn the server on the same port and block until it's ready.
+
+        Reuses ``self.port`` so the proxy's cached base_url stays valid — callers
+        don't have to rewire the OpenAI proxy after a crash recovery.
+        """
+        self.stop()
+        self.start()
+        self.wait_ready()
+
     def stop(self) -> None:
         if self._proc is None or self._proc.poll() is not None:
             return

@@ -4,6 +4,12 @@ export interface IndexEntry {
 	hash: string;
 	docId: string;
 	lastIndexed: number;
+	/**
+	 * Extraction mode the note was last indexed under (true = full KG, false =
+	 * embeddings-only). Undefined on entries written before this was tracked.
+	 * Drives forced re-extraction when the user toggles Lite ↔ Full.
+	 */
+	extractEntities?: boolean;
 }
 
 /**

@@ -148,8 +148,20 @@ export class SidecarManager {
 
 	private startHeartbeat(): void {
 		this.stopHeartbeat();
-		// Keeps the sidecar's idle watchdog from self-terminating us.
-		this.heartbeat = setInterval(() => void this.client?.health(), 30_000);
+		// Keeps the sidecar's idle watchdog from self-terminating us, and reflects
+		// the sidecar's real health (e.g. a crashed llama child the OS-level
+		// process-exit handler can't see) onto the status bar.
+		this.heartbeat = setInterval(() => void this.pollHealth(), 15_000);
+	}
+
+	private async pollHealth(): Promise<void> {
+		if (this.stoppedByUs) return;
+		const h = await this.client?.health();
+		// A null/transient unreachable response is covered by the process-exit
+		// handler; only act on an explicit terminal status from the sidecar.
+		if (!h) return;
+		if (h.status === "ok") this.emit("ok", `namespace ${h.namespace_id ?? "?"}`);
+		else if (h.status === "error") this.emit("error", h.error ?? "backend degraded");
 	}
 
 	private stopHeartbeat(): void {
