@@ -1,6 +1,6 @@
 # Uru
 
-**Ask your notes anything — and get answers grounded in what you actually wrote, completely offline.**
+**Ask your Obsidian notes anything — and get grounded answers, completely offline.**
 
 Uru turns your [Obsidian](https://obsidian.md) vault into a queryable **knowledge graph + semantic search index**. Drop in your notes and Uru reads them, links the people, projects, and ideas inside, and lets you *recall* or *chat* with the whole vault — with citations back to the exact notes. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
 
