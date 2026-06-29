@@ -46,17 +46,29 @@ GOAL: Install the Uru Obsidian plugin into the user's vault.
 INPUTS YOU NEED FROM THE USER:
   - VAULT  = absolute path to their Obsidian vault (the folder containing `.obsidian/`)
 
-STEP 1 — build the plugin (requires Node.js 18+):
-  git clone https://github.com/Arsenije/Uru.git
-  cd Uru
-  npm install
-  npm run build
-  # SUCCESS CHECK: `main.js` now exists in the repo root.
+STEP 1 — get the plugin files. Pick ONE:
 
-STEP 2 — deploy into the vault (do NOT put it anywhere else):
-  mkdir -p "<VAULT>/.obsidian/plugins/uru"
-  cp main.js manifest.json styles.css "<VAULT>/.obsidian/plugins/uru/"
-  # SUCCESS CHECK: those three files exist under .obsidian/plugins/uru/.
+  Option A — prebuilt release (no Node toolchain needed; prefer this):
+    Download the latest `uru-vX.Y.Z.zip` from
+    https://github.com/Arsenije/Uru/releases and extract it so that
+    `<VAULT>/.obsidian/plugins/uru/` contains main.js, manifest.json, styles.css.
+
+  Option B — build from source (requires Node.js 18+):
+    git clone https://github.com/Arsenije/Uru.git
+    cd Uru
+    npm install
+    npm run build                         # SUCCESS: main.js now exists in the repo root
+    mkdir -p "<VAULT>/.obsidian/plugins/uru"
+    cp main.js manifest.json styles.css "<VAULT>/.obsidian/plugins/uru/"
+
+STEP 2 — VERIFY staging (headless; the last thing you can check before the GUI):
+  If you built from source (Option B), run the bundled checker:
+    node scripts/verify-staging.mjs "<VAULT>"     # prints "OK: Uru <version> staged ..."
+  Otherwise just confirm these three files exist and are non-empty:
+    <VAULT>/.obsidian/plugins/uru/main.js
+    <VAULT>/.obsidian/plugins/uru/manifest.json
+    <VAULT>/.obsidian/plugins/uru/styles.css
+  Do NOT hand off until this passes.
 
 STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
   Tell them: "Open Obsidian → Settings → Community plugins → enable 'Uru'.
@@ -83,7 +95,8 @@ DO NOT:
 | Plugin id | `uru` |
 | Plugin files to deploy | `main.js`, `manifest.json`, `styles.css` |
 | Deploy target | `<VAULT>/.obsidian/plugins/uru/` |
-| Build command | `npm install && npm run build` |
+| Build command (source install only) | `npm install && npm run build` |
+| Headless staging check | `node scripts/verify-staging.mjs "<VAULT>"` |
 | Platforms | macOS, Windows, Linux (desktop only; **no mobile**) |
 | Runtime prerequisites | None — Python 3.13, llama.cpp, and models auto-download on first run |
 | First-run download | ~3 GB (chat model + embedding model + llama.cpp runtime) |
