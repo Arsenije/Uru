@@ -45,7 +45,7 @@ export class Indexer {
 		statePath: string,
 		private onIndexStatus: (s: IndexStatus | null) => void = () => {},
 	) {
-		this.store = new HashStore(app.vault.adapter, statePath);
+		this.store = new HashStore(statePath);
 		this.recompileIgnore();
 	}
 

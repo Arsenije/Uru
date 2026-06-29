@@ -22,6 +22,7 @@ TOKEN = "smoke-token"
 PORT = 8719
 EMBED_MODEL = MODELS / "gguf" / "mxbai-embed-large-v1-f16.gguf"
 EMBED_DIM = "1024"
+LLAMA_SERVER = HERE / ".llamacpp-test" / "llama-b9838" / "llama-server"
 
 FIXTURE = (
     "Uru is an Obsidian plugin by Archie at DeytaHQ. It uses khora for "
@@ -37,6 +38,7 @@ def main() -> int:
             "--port", str(PORT),
             "--token", TOKEN,
             "--db-path", str(WORK / "uru.db"),
+            "--llama-server", str(LLAMA_SERVER),
             "--chat-model", str(MODELS / "Qwen2.5-3B-Instruct-Q4_K_M.gguf"),
             "--embed-model", str(EMBED_MODEL),
             "--embedding-dimension", EMBED_DIM,

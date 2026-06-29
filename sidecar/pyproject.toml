@@ -4,10 +4,14 @@ version = "0.1.0"
 description = "Local HTTP sidecar that drives khora for the Uru Obsidian plugin."
 requires-python = ">=3.13"
 dependencies = [
-    "khora[sqlite-lance]",
+    # Pinned to the validated khora release. (The 0.13.0 PyPI tag predates the
+    # embedded sqlite_lance migration fix; 0.21.0 is the current release and
+    # passes the full smoke + chat suite.) Inference runs via the prebuilt
+    # llama.cpp `llama-server` binary (downloaded by the bootstrap), NOT
+    # llama-cpp-python — that package is sdist-only with no py3.13 wheels.
+    "khora[sqlite-lance]==0.21.0",
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
-    "llama-cpp-python[server]>=0.3.2",
     "huggingface-hub>=0.25",
 ]
 

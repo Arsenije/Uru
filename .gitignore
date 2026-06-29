@@ -10,3 +10,6 @@ index-state.json
 
 # OS
 .DS_Store
+
+# Release build output
+dist/

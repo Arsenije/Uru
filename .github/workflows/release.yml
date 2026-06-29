@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npm run build
+      - name: Stage plugin bundle
+        run: |
+          set -e
+          mkdir -p dist/uru/sidecar/uru_sidecar
+          cp main.js manifest.json styles.css dist/uru/
+          cp sidecar/pyproject.toml dist/uru/sidecar/
+          cp sidecar/uru_sidecar/*.py dist/uru/sidecar/uru_sidecar/
+          (cd dist && zip -r "uru-${GITHUB_REF_NAME}.zip" uru)
+          ls -la dist
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/uru-*.zip
+            manifest.json
+          body: |
+            Manual install: download `uru-${{ github.ref_name }}.zip`, extract the
+            `uru/` folder into `<your-vault>/.obsidian/plugins/`, then enable Uru in
+            Settings → Community plugins. First run downloads the local backend
+            (~3 GB) — see the setup dialog.

@@ -1,35 +1,44 @@
 import { spawn } from "child_process";
-import { existsSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 
 export interface BackendPaths {
 	pythonPath: string;
 	sidecarCwd: string;
+	llamaServerBin: string;
 	chatModelPath: string;
 	embedModelPath: string;
 	embeddingDimension: number;
 }
 
 export interface BootstrapContext {
-	/** Absolute path to the `sidecar/` package (resolved through the plugin symlink). */
-	sidecarDir: string;
-	/** Absolute path to the repo root (holds the vendored `khora/`). */
-	repoRoot: string;
-	/** Writable dir for a created venv / downloaded models (plugin data dir). */
-	dataDir: string;
+	/** Bundled sidecar source (`<pluginDir>/sidecar`) — also holds dev .venv/.models. */
+	pluginSidecarDir: string;
+	/** Shared app-data runtime (uv, venv, models, llama.cpp). */
+	runtimeDir: string;
 	log: (line: string) => void;
 }
 
-// Known model filenames. The embedding model fixes the vector dimension.
+// Pinned versions.
+const UV_VERSION = "0.11.4";
+const LLAMA_BUILD = "b9838";
+
+// Models. The embedding model fixes the vector dimension.
+const CHAT_REPO = "bartowski/Qwen2.5-3B-Instruct-GGUF";
 const CHAT_GGUF = "Qwen2.5-3B-Instruct-Q4_K_M.gguf";
+const EMBED_REPO = "mixedbread-ai/mxbai-embed-large-v1";
 const EMBED_FILE = "gguf/mxbai-embed-large-v1-f16.gguf";
 const EMBED_CANDIDATES: Array<{ file: string; dim: number }> = [
 	{ file: EMBED_FILE, dim: 1024 }, // mxbai-embed-large-v1
-	{ file: "nomic-embed-text-v1.5.f16.gguf", dim: 768 }, // fallback (dev cache)
+	{ file: "nomic-embed-text-v1.5.f16.gguf", dim: 768 }, // dev cache fallback
 ];
-const CHAT_REPO = "bartowski/Qwen2.5-3B-Instruct-GGUF";
-const EMBED_REPO = "mixedbread-ai/mxbai-embed-large-v1";
+
+const exe = (name: string) => (process.platform === "win32" ? `${name}.exe` : name);
+const venvPython = (venvDir: string) =>
+	process.platform === "win32"
+		? join(venvDir, "Scripts", "python.exe")
+		: join(venvDir, "bin", "python");
 
 function run(
 	cmd: string,
@@ -49,18 +58,47 @@ function run(
 	});
 }
 
-/** Locate a usable `uv` binary (system install or a previously downloaded one). */
-function findUv(dataDir: string): string | null {
-	const candidates = [
-		join(dataDir, "bin", "uv"),
-		join(homedir(), ".local", "bin", "uv"),
-		"/opt/homebrew/bin/uv",
-		"/usr/local/bin/uv",
-	];
-	return candidates.find(existsSync) ?? null;
+async function download(url: string, dest: string): Promise<void> {
+	const resp = await fetch(url, { redirect: "follow" });
+	if (!resp.ok) throw new Error(`download failed (HTTP ${resp.status}): ${url}`);
+	writeFileSync(dest, Buffer.from(await resp.arrayBuffer()));
 }
 
-function findModels(modelsDir: string): Omit<BackendPaths, "pythonPath" | "sidecarCwd"> | null {
+/** Extract .tar.gz or .zip via bsdtar (`tar -xf`), available on macOS/Linux/Win10+. */
+async function extract(archive: string, destDir: string, log: (s: string) => void): Promise<void> {
+	mkdirSync(destDir, { recursive: true });
+	await run("tar", ["-xf", archive, "-C", destDir], {}, log);
+}
+
+/** Shallow-recursive search for a binary by name under `root`. */
+function findFile(root: string, name: string, depth = 4): string | null {
+	if (!existsSync(root)) return null;
+	const want = exe(name);
+	const stack: Array<[string, number]> = [[root, 0]];
+	while (stack.length) {
+		const [dir, d] = stack.pop()!;
+		let entries: string[];
+		try {
+			entries = readdirSync(dir);
+		} catch {
+			continue;
+		}
+		for (const e of entries) {
+			const full = join(dir, e);
+			let st;
+			try {
+				st = statSync(full);
+			} catch {
+				continue;
+			}
+			if (st.isFile() && e === want) return full;
+			if (st.isDirectory() && d < depth) stack.push([full, d + 1]);
+		}
+	}
+	return null;
+}
+
+function findModels(modelsDir: string): Pick<BackendPaths, "chatModelPath" | "embedModelPath" | "embeddingDimension"> | null {
 	const chat = join(modelsDir, CHAT_GGUF);
 	if (!existsSync(chat)) return null;
 	for (const cand of EMBED_CANDIDATES) {
@@ -72,63 +110,109 @@ function findModels(modelsDir: string): Omit<BackendPaths, "pythonPath" | "sidec
 	return null;
 }
 
-const venvPython = (venvDir: string) =>
-	process.platform === "win32"
-		? join(venvDir, "Scripts", "python.exe")
-		: join(venvDir, "bin", "python");
+// ---- asset naming ------------------------------------------------------
+
+function uvAsset(): string {
+	const arm = process.arch === "arm64";
+	if (process.platform === "darwin") return arm ? "uv-aarch64-apple-darwin.tar.gz" : "uv-x86_64-apple-darwin.tar.gz";
+	if (process.platform === "win32") return arm ? "uv-aarch64-pc-windows-msvc.zip" : "uv-x86_64-pc-windows-msvc.zip";
+	return arm ? "uv-aarch64-unknown-linux-gnu.tar.gz" : "uv-x86_64-unknown-linux-gnu.tar.gz";
+}
+
+function llamaAsset(): string {
+	const arm = process.arch === "arm64";
+	if (process.platform === "darwin") return `llama-${LLAMA_BUILD}-bin-macos-${arm ? "arm64" : "x64"}.tar.gz`;
+	if (process.platform === "win32") return `llama-${LLAMA_BUILD}-bin-win-cpu-${arm ? "arm64" : "x64"}.zip`;
+	return `llama-${LLAMA_BUILD}-bin-ubuntu-${arm ? "arm64" : "x64"}.tar.gz`;
+}
+
+// ---- component bootstrappers -------------------------------------------
+
+async function ensureUv(runtimeDir: string, log: (s: string) => void): Promise<string> {
+	const local = join(runtimeDir, "uv", exe("uv"));
+	const candidates = [
+		local,
+		join(homedir(), ".local", "bin", exe("uv")),
+		"/opt/homebrew/bin/uv",
+		"/usr/local/bin/uv",
+	];
+	const found = candidates.find(existsSync);
+	if (found) return found;
+
+	log("Downloading uv…");
+	const tmp = join(runtimeDir, "tmp");
+	mkdirSync(tmp, { recursive: true });
+	const asset = uvAsset();
+	const archive = join(tmp, asset);
+	await download(`https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${asset}`, archive);
+	await extract(archive, join(runtimeDir, "uv"), log);
+	const bin = findFile(join(runtimeDir, "uv"), "uv");
+	if (!bin) throw new Error("uv binary not found after extraction");
+	if (process.platform !== "win32") chmodSync(bin, 0o755);
+	return bin;
+}
+
+async function ensureLlamaServer(runtimeDir: string, log: (s: string) => void): Promise<string> {
+	const root = join(runtimeDir, "llama.cpp");
+	const existing = findFile(root, "llama-server");
+	if (existing) return existing;
+
+	log("Downloading llama.cpp…");
+	const tmp = join(runtimeDir, "tmp");
+	mkdirSync(tmp, { recursive: true });
+	const asset = llamaAsset();
+	const archive = join(tmp, asset);
+	await download(`https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_BUILD}/${asset}`, archive);
+	await extract(archive, root, log);
+	if (process.platform === "darwin") {
+		// Clear Gatekeeper quarantine so the downloaded binary can run.
+		await run("xattr", ["-dr", "com.apple.quarantine", root], {}, () => {}).catch(() => undefined);
+	}
+	const bin = findFile(root, "llama-server");
+	if (!bin) throw new Error("llama-server not found after extraction");
+	if (process.platform !== "win32") chmodSync(bin, 0o755);
+	return bin;
+}
+
+// ---- entrypoint --------------------------------------------------------
 
 /**
- * Resolve a working backend, bootstrapping with uv if needed.
- *
- * Fast paths first: a dev venv shipped in the repo (`sidecar/.venv`) and cached
- * models (`sidecar/.models`) are reused as-is. Otherwise a venv is created in the
- * plugin data dir and dependencies + models are installed via uv.
+ * Resolve a working backend, bootstrapping into the shared app-data runtime if
+ * needed. Dev fast-path (repo-local venv + models + llama.cpp) is reused as-is.
  */
 export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths> {
-	const { sidecarDir, repoRoot, dataDir, log } = ctx;
+	const { pluginSidecarDir, runtimeDir, log } = ctx;
+	mkdirSync(runtimeDir, { recursive: true });
 
-	// 1) Dev fast path — repo-local venv + cached models.
-	const devVenvPy = venvPython(join(sidecarDir, ".venv"));
-	const devModels = findModels(join(sidecarDir, ".models"));
-	if (existsSync(devVenvPy) && devModels) {
-		log("Using repo-local venv and cached models.");
-		return { pythonPath: devVenvPy, sidecarCwd: sidecarDir, ...devModels };
+	// 1) Dev fast path — everything cached in the repo.
+	const devPy = venvPython(join(pluginSidecarDir, ".venv"));
+	const devModels = findModels(join(pluginSidecarDir, ".models"));
+	const devLlama = findFile(join(pluginSidecarDir, ".llamacpp-test"), "llama-server");
+	if (existsSync(devPy) && devModels && devLlama) {
+		log("Using repo-local dev backend.");
+		return { pythonPath: devPy, sidecarCwd: pluginSidecarDir, llamaServerBin: devLlama, ...devModels };
 	}
 
-	// 2) uv bootstrap into the plugin data dir.
-	const uv = findUv(dataDir);
-	if (!uv) {
-		throw new Error(
-			"uv not found. Install it (https://docs.astral.sh/uv/) or place it under the plugin data dir, then re-run setup.",
-		);
-	}
-	const venvDir = join(dataDir, "sidecar-venv");
+	// 2) Full bootstrap into app-data.
+	const uv = await ensureUv(runtimeDir, log);
+	const env = { ...process.env };
+	const venvDir = join(runtimeDir, "venv");
 	const py = venvPython(venvDir);
-	const env = { ...process.env, SETUPTOOLS_SCM_PRETEND_VERSION: "0.13.0" };
-
 	if (!existsSync(py)) {
-		log("Installing Python 3.13 (uv)…");
+		log("Installing Python 3.13…");
 		await run(uv, ["python", "install", "3.13"], { env }, log);
 		log("Creating virtual environment…");
 		await run(uv, ["venv", "--python", "3.13", venvDir], { env }, log);
-		log("Installing khora + sidecar (this can take a few minutes)…");
-		await run(
-			uv,
-			[
-				"pip", "install", "--python", py,
-				"-e", `${join(repoRoot, "khora")}[sqlite-lance]`,
-				"-e", sidecarDir,
-			],
-			{ env },
-			log,
-		);
+		log("Installing khora + sidecar…");
+		await run(uv, ["pip", "install", "--python", py, pluginSidecarDir], { env }, log);
 	}
 
-	// 3) Models.
-	const modelsDir = join(dataDir, "models");
+	const llamaServerBin = await ensureLlamaServer(runtimeDir, log);
+
+	const modelsDir = join(runtimeDir, "models");
 	let models = findModels(modelsDir);
 	if (!models) {
-		log("Downloading models (chat + embedding, ~2.5 GB on first run)…");
+		log("Downloading models (~3 GB, first run only)…");
 		await run(
 			py,
 			[
@@ -147,5 +231,7 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 	if (!models) throw new Error("Model download failed; check diagnostics.");
 
 	log("Backend ready.");
-	return { pythonPath: py, sidecarCwd: sidecarDir, ...models };
+	// uru_sidecar is pip-installed into the venv, so `python -m uru_sidecar`
+	// works from any cwd; runtimeDir is a harmless PYTHONPATH.
+	return { pythonPath: py, sidecarCwd: runtimeDir, llamaServerBin, ...models };
 }

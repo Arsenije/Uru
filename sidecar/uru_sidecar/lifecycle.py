@@ -38,12 +38,12 @@ class SidecarRuntime:
         cfg = self.config
         work = cfg.work_dir
         self._chat = LlamaServer(
-            cfg.chat_model_path, work, alias="uru-chat",
+            cfg.llama_server_bin, cfg.chat_model_path, work, alias="uru-chat",
             n_ctx=cfg.n_ctx_chat, n_gpu_layers=cfg.n_gpu_layers,
         )
         self._embed = LlamaServer(
-            cfg.embed_model_path, work, alias="uru-embed", embedding=True,
-            n_ctx=cfg.n_ctx_embed, n_gpu_layers=cfg.n_gpu_layers,
+            cfg.llama_server_bin, cfg.embed_model_path, work, alias="uru-embed",
+            embedding=True, n_ctx=cfg.n_ctx_embed, n_gpu_layers=cfg.n_gpu_layers,
         )
         log.info("starting llama.cpp servers (chat + embed)")
         self._chat.start()
@@ -56,6 +56,18 @@ class SidecarRuntime:
         proxy_base = await self._start_proxy(self._chat.base_url, self._embed.base_url)
         os.environ.update(cfg.khora_env(proxy_base))
         log.info("proxy up at %s; connecting khora", proxy_base)
+
+        # Force grammar-constrained JSON (json_schema) for our local chat model.
+        # llama-server enforces the schema via GBNF, so the small 3B reliably
+        # emits the exact entity shape (`name` field). Without this, khora falls
+        # back to loose json_object and the model picks inconsistent keys →
+        # entities get dropped ("skipped N entities with empty/missing name").
+        try:
+            from khora.extraction.extractors.llm import LLMEntityExtractor
+
+            LLMEntityExtractor.MODELS_REQUIRING_JSON_SCHEMA.add("openai/uru-chat")
+        except Exception:  # noqa: BLE001 — best-effort; extraction still works (looser)
+            log.warning("could not enable json_schema extraction mode")
 
         from khora import Khora  # imported after env is set
 
@@ -90,7 +102,7 @@ class SidecarRuntime:
                 self.namespace_id = str(ns.namespace_id)
                 return
             log.warning("namespace %s not found in DB; creating a fresh one", cfg.namespace_id)
-        ns = await self._kb.create_namespace(metadata={"app": "uru"})
+        ns = await self._kb.create_namespace()
         self.namespace_id = str(ns.namespace_id)
 
     async def stop(self) -> None:

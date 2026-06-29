@@ -1,4 +1,4 @@
-import type { DataAdapter } from "obsidian";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 
 export interface IndexEntry {
 	hash: string;
@@ -8,24 +8,22 @@ export interface IndexEntry {
 
 /**
  * Persists `{ vault-relative path -> {hash, docId, lastIndexed} }` so the
- * indexer can skip unchanged notes (avoiding the per-note LLM extraction cost)
- * and resolve a path to its khora document id for fast deletes.
+ * indexer can skip unchanged notes (avoiding per-note LLM extraction cost) and
+ * resolve a path to its khora document id for fast deletes.
  *
- * Kept in its own file (not data.json) so the settings blob stays small.
+ * Stored at an absolute app-data path (outside the vault) so it survives plugin
+ * updates alongside the khora db — hence node `fs`, not Obsidian's DataAdapter.
  */
 export class HashStore {
 	private entries: Record<string, IndexEntry> = {};
 	private loaded = false;
 
-	constructor(
-		private adapter: DataAdapter,
-		private path: string,
-	) {}
+	constructor(private path: string) {}
 
 	async load(): Promise<void> {
 		try {
-			if (await this.adapter.exists(this.path)) {
-				this.entries = JSON.parse(await this.adapter.read(this.path));
+			if (existsSync(this.path)) {
+				this.entries = JSON.parse(readFileSync(this.path, "utf8"));
 			}
 		} catch {
 			this.entries = {};
@@ -61,6 +59,6 @@ export class HashStore {
 
 	async save(): Promise<void> {
 		if (!this.loaded) return;
-		await this.adapter.write(this.path, JSON.stringify(this.entries));
+		writeFileSync(this.path, JSON.stringify(this.entries));
 	}
 }

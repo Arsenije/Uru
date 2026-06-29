@@ -34,6 +34,7 @@ class SidecarConfig:
     port: int
     token: str
     db_path: Path
+    llama_server_bin: Path
     chat_model_path: Path
     embed_model_path: Path
     embedding_dimension: int = 1024  # mxbai-embed-large-v1
@@ -67,6 +68,7 @@ class SidecarConfig:
         p.add_argument("--port", type=int, required=True)
         p.add_argument("--token", default=os.environ.get("URU_TOKEN", ""))
         p.add_argument("--db-path", required=True, type=Path)
+        p.add_argument("--llama-server", required=True, type=Path)
         p.add_argument("--chat-model", required=True, type=Path)
         p.add_argument("--embed-model", required=True, type=Path)
         p.add_argument("--embedding-dimension", type=int, default=1024)
@@ -83,6 +85,7 @@ class SidecarConfig:
             port=ns.port,
             token=ns.token,
             db_path=ns.db_path,
+            llama_server_bin=ns.llama_server,
             chat_model_path=ns.chat_model,
             embed_model_path=ns.embed_model,
             embedding_dimension=ns.embedding_dimension,

@@ -10,6 +10,7 @@ export interface SidecarLaunchSpec {
 	/** Working dir for `python -m uru_sidecar` (the sidecar repo root in dev). */
 	cwd: string;
 	dbPath: string;
+	llamaServerPath: string;
 	chatModelPath: string;
 	embedModelPath: string;
 	embeddingDimension: number;
@@ -80,6 +81,7 @@ export class SidecarManager {
 			"--port", String(this.port),
 			"--token", this.token,
 			"--db-path", this.spec.dbPath,
+			"--llama-server", this.spec.llamaServerPath,
 			"--chat-model", this.spec.chatModelPath,
 			"--embed-model", this.spec.embedModelPath,
 			"--embedding-dimension", String(this.spec.embeddingDimension),
@@ -104,12 +106,19 @@ export class SidecarManager {
 		return health;
 	}
 
-	/** Kill an entire sidecar process group (sidecar + llama children). */
-	private killGroup(signal: NodeJS.Signals): void {
-		const pid = this.proc?.pid;
-		if (!pid) return;
+	/** Kill an entire process tree by pid (sidecar + its llama children). */
+	private static killTree(pid: number, signal: NodeJS.Signals): void {
+		if (process.platform === "win32") {
+			// No process groups on Windows; taskkill walks the tree (/T).
+			try {
+				spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
+			} catch {
+				/* already gone */
+			}
+			return;
+		}
 		try {
-			process.kill(-pid, signal);
+			process.kill(-pid, signal); // negative pid = process group (detached)
 		} catch {
 			try {
 				process.kill(pid, signal);
@@ -119,22 +128,18 @@ export class SidecarManager {
 		}
 	}
 
+	/** Kill the entire sidecar process group/tree (sidecar + llama children). */
+	private killGroup(signal: NodeJS.Signals): void {
+		const pid = this.proc?.pid;
+		if (pid) SidecarManager.killTree(pid, signal);
+	}
+
 	/** On startup, terminate a leftover sidecar recorded in the lockfile. */
 	private takeOverExisting(): void {
 		if (!existsSync(this.spec.lockPath)) return;
 		try {
 			const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8"));
-			if (typeof pid === "number") {
-				try {
-					process.kill(-pid, "SIGKILL"); // whole group (new detached layout)
-				} catch {
-					try {
-						process.kill(pid, "SIGKILL"); // pre-detached fallback
-					} catch {
-						/* already gone */
-					}
-				}
-			}
+			if (typeof pid === "number") SidecarManager.killTree(pid, "SIGKILL");
 		} catch {
 			/* unreadable lock */
 		}

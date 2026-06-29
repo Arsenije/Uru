@@ -15,6 +15,7 @@ MODELS = HERE / ".models"
 WORK = HERE / ".chat-test"
 TOKEN = "chat-token"
 PORT = 8741
+LLAMA_SERVER = HERE / ".llamacpp-test" / "llama-b9838" / "llama-server"
 
 DOCS = [
     {"external_id": "Curie.md", "title": "Marie Curie",
@@ -31,6 +32,7 @@ def main() -> int:
             sys.executable, "-m", "uru_sidecar",
             "--port", str(PORT), "--token", TOKEN,
             "--db-path", str(WORK / "uru.db"),
+            "--llama-server", str(LLAMA_SERVER),
             "--chat-model", str(MODELS / "Qwen2.5-3B-Instruct-Q4_K_M.gguf"),
             "--embed-model", str(MODELS / "gguf" / "mxbai-embed-large-v1-f16.gguf"),
             "--embedding-dimension", "1024",
@@ -52,9 +54,12 @@ def main() -> int:
                 pass
             time.sleep(1)
 
+        ent_total = 0
         for d in DOCS:
-            httpx.post(f"{base}/remember", headers=auth, json=d, timeout=180)
-        print("[ready] indexed fixtures")
+            rr = httpx.post(f"{base}/remember", headers=auth, json=d, timeout=180).json()
+            ent_total += rr.get("entities_extracted", 0)
+            print(f"[remember] {d['external_id']}: entities={rr.get('entities_extracted')} rels={rr.get('relationships_created')}")
+        print(f"[ready] indexed fixtures, {ent_total} entities total")
 
         q = "Who won a Nobel Prize in Chemistry and what did they discover?"
 

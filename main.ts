@@ -11,6 +11,7 @@ import { randomUUID } from "crypto";
 
 import { DEFAULT_SETTINGS, UruSettingTab, type UruSettings } from "./src/settings";
 import { ensureBackend, type BackendPaths } from "./src/bootstrap/uv";
+import { runtimeDir, vaultDataDir } from "./src/paths";
 import { SidecarManager } from "./src/sidecar/manager";
 import type { SidecarClient, HealthResponse } from "./src/sidecar/client";
 import { Indexer, type IndexStatus } from "./src/indexing/indexer";
@@ -95,32 +96,35 @@ export default class UruPlugin extends Plugin {
 
 	// ---- backend lifecycle ----------------------------------------------
 
-	private paths() {
+	private pluginSidecarDir(): string {
 		const adapter = this.app.vault.adapter;
 		if (!(adapter instanceof FileSystemAdapter)) {
 			throw new Error("Uru requires a local (filesystem) vault.");
 		}
 		const pluginAbs = join(adapter.getBasePath(), this.manifest.dir ?? "");
-		const repoRoot = realpathSync(pluginAbs); // plugin dir is a symlink to the repo in dev
-		const sidecarDir = join(repoRoot, "sidecar");
-		const dataDir = join(repoRoot, ".uru-data");
-		mkdirSync(dataDir, { recursive: true });
-		return { repoRoot, sidecarDir, dataDir };
+		// In dev the plugin dir is a symlink to the repo; resolve it so the
+		// bundled `sidecar/` (and dev .venv/.models) are found.
+		return join(realpathSync(pluginAbs), "sidecar");
 	}
 
 	private async boot(): Promise<void> {
 		try {
 			this.setStatus("starting", "resolving backend");
-			const { repoRoot, sidecarDir, dataDir } = this.paths();
+			if (!this.settings.vaultKey) {
+				this.settings.vaultKey = randomUUID();
+				await this.saveSettings();
+			}
+			const vaultDir = vaultDataDir(this.settings.vaultKey);
+			mkdirSync(vaultDir, { recursive: true });
+
 			const backend = await ensureBackend({
-				repoRoot,
-				sidecarDir,
-				dataDir,
+				pluginSidecarDir: this.pluginSidecarDir(),
+				runtimeDir: runtimeDir(),
 				log: (l) => this.setStatus("starting", l),
 			});
 			await this.persistBackend(backend);
-			await this.startSidecar(backend, dataDir);
-			await this.startIndexer();
+			await this.startSidecar(backend, vaultDir);
+			await this.startIndexer(vaultDir);
 		} catch (e) {
 			this.setStatus("error", (e as Error).message);
 			new Notice(`Uru setup failed: ${(e as Error).message}`);
@@ -138,17 +142,18 @@ export default class UruPlugin extends Plugin {
 		await this.saveSettings();
 	}
 
-	private async startSidecar(b: BackendPaths, dataDir: string): Promise<void> {
+	private async startSidecar(b: BackendPaths, vaultDir: string): Promise<void> {
 		this.manager = new SidecarManager({
 			pythonPath: b.pythonPath,
 			cwd: b.sidecarCwd,
-			dbPath: this.settings.dbPath || join(dataDir, "khora.db"),
+			dbPath: this.settings.dbPath || join(vaultDir, "khora.db"),
+			llamaServerPath: b.llamaServerBin,
 			chatModelPath: b.chatModelPath,
 			embedModelPath: b.embedModelPath,
 			embeddingDimension: b.embeddingDimension,
 			namespaceId: this.settings.namespaceId,
 			extractEntities: this.settings.extractEntities,
-			lockPath: join(dataDir, "uru-sidecar.lock"),
+			lockPath: join(vaultDir, "uru-sidecar.lock"),
 		});
 		this.manager.onStatus((s, d) => this.setStatus(s, d));
 		const health = await this.manager.start();
@@ -159,8 +164,8 @@ export default class UruPlugin extends Plugin {
 		}
 	}
 
-	private async startIndexer(): Promise<void> {
-		const statePath = `${this.manifest.dir}/index-state.json`;
+	private async startIndexer(vaultDir: string): Promise<void> {
+		const statePath = join(vaultDir, "index-state.json");
 		this.indexer = new Indexer(
 			this.app,
 			() => this.client(),

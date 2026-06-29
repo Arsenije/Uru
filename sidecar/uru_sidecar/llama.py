@@ -1,23 +1,20 @@
-"""Supervise local llama.cpp OpenAI-compatible inference servers.
+"""Supervise local llama.cpp ``llama-server`` processes.
 
-We run **two single-model** ``llama_cpp.server`` processes — one chat/extraction
-model, one embedding model — so each stays resident in memory. (A single
-multi-model server is unusable here: ``llama_cpp.server.LlamaProxy`` evicts and
-reloads the model on every alias switch, and khora's extraction interleaves chat
-and embedding calls, which would thrash the 2 GB chat model off the GPU on every
-call.)
+We run **two single-model** servers — one chat/extraction model, one embedding
+model — so each stays resident in memory; a thin proxy (``proxy.py``) fronts both
+so khora needs only a single ``OPENAI_API_BASE``.
 
-A thin proxy (see ``app.py``) fronts both so khora — which sends every LiteLLM
-call to one ``OPENAI_API_BASE`` and never passes a per-call ``api_base`` — needs
-only a single base URL.
+These are the **official prebuilt llama.cpp binaries** (ggml-org/llama.cpp
+releases), not ``llama-cpp-python``: that package is sdist-only and has no
+Python-3.13 wheels, so it would compile from source on every install. The
+prebuilt binary needs no toolchain and ships per-platform (Metal on macOS arm64,
+CPU elsewhere).
 """
 
 from __future__ import annotations
 
-import json
 import socket
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -36,14 +33,15 @@ def free_port() -> int:
 
 @dataclass
 class LlamaServer:
-    """A single-model llama.cpp OpenAI-compatible server subprocess."""
+    """A single-model ``llama-server`` subprocess (OpenAI-compatible)."""
 
+    server_bin: Path
     model_path: Path
     work_dir: Path
     alias: str
     embedding: bool = False
     n_ctx: int = 8192
-    n_gpu_layers: int = -1  # offload all layers (Metal on Apple Silicon)
+    n_gpu_layers: int = 999  # offload all (ignored by CPU-only builds)
     host: str = "127.0.0.1"
     port: int = 0
 
@@ -58,40 +56,25 @@ class LlamaServer:
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
 
-    def _config(self) -> dict:
-        model: dict = {
-            "model": str(self.model_path),
-            "model_alias": self.alias,
-            "n_ctx": self.n_ctx,
-            "n_gpu_layers": self.n_gpu_layers,
-        }
+    def _args(self) -> list[str]:
+        args = [
+            str(self.server_bin),
+            "--model", str(self.model_path),
+            "--host", self.host,
+            "--port", str(self.port),
+            "--ctx-size", str(self.n_ctx),
+            "--n-gpu-layers", str(self.n_gpu_layers),
+            "--alias", self.alias,
+        ]
         if self.embedding:
-            model["embedding"] = True
-        # host/port must live in the config file: with --config_file the
-        # llama_cpp.server CLI ignores --host/--port and falls back to :8000.
-        return {"host": self.host, "port": self.port, "models": [model]}
+            args += ["--embeddings", "--pooling", "mean"]
+        return args
 
     def start(self) -> None:
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        config_path = self.work_dir / f"llama-{self.alias}.json"
-        config_path.write_text(json.dumps(self._config(), indent=2))
         self._log_path = self.work_dir / f"llama-{self.alias}.log"
         log = open(self._log_path, "w")  # noqa: SIM115 — handle owned by the child
-        self._proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "llama_cpp.server",
-                "--config_file",
-                str(config_path),
-                "--host",
-                self.host,
-                "--port",
-                str(self.port),
-            ],
-            stdout=log,
-            stderr=subprocess.STDOUT,
-        )
+        self._proc = subprocess.Popen(self._args(), stdout=log, stderr=subprocess.STDOUT)
 
     def log_tail(self, n: int = 25) -> str:
         if not self._log_path or not self._log_path.exists():
@@ -99,13 +82,13 @@ class LlamaServer:
         return "\n".join(self._log_path.read_text(errors="replace").splitlines()[-n:])
 
     def wait_ready(self, timeout: float = 240.0) -> None:
-        """Block until the HTTP server answers /v1/models (model loads lazily)."""
+        """Block until /health reports the model is loaded."""
         deadline = time.time() + timeout
-        url = f"{self.base_url}/v1/models"
+        url = f"{self.base_url}/health"
         while time.time() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
                 raise RuntimeError(
-                    f"llama server '{self.alias}' exited early "
+                    f"llama-server '{self.alias}' exited early "
                     f"(code {self._proc.returncode}):\n{self.log_tail()}"
                 )
             try:
@@ -116,7 +99,7 @@ class LlamaServer:
                 pass
             time.sleep(0.5)
         raise TimeoutError(
-            f"llama server '{self.alias}' not ready in {timeout}s:\n{self.log_tail()}"
+            f"llama-server '{self.alias}' not ready in {timeout}s:\n{self.log_tail()}"
         )
 
     def stop(self) -> None:
