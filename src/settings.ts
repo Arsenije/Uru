@@ -89,6 +89,10 @@ export class UruSettingTab extends PluginSettingTab {
 				t.setValue(s.extractEntities).onChange(async (v) => {
 					s.extractEntities = v;
 					await this.plugin.saveSettings();
+					new Notice(
+						"Uru: mode changed. Restart the backend, then Force re-index to apply it.",
+						6000,
+					);
 				}),
 			);
 

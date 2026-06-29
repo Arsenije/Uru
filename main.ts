@@ -17,6 +17,9 @@ import type { SidecarClient, HealthResponse } from "./src/sidecar/client";
 import { Indexer, type IndexStatus } from "./src/indexing/indexer";
 import { RecallView, URU_RECALL_VIEW } from "./src/views/recallView";
 import { ChatView, URU_CHAT_VIEW } from "./src/views/chatView";
+import { SetupModal } from "./src/views/setupModal";
+import { appDataDir } from "./src/paths";
+import { rmSync } from "fs";
 
 export default class UruPlugin extends Plugin {
 	settings!: UruSettings;
@@ -74,7 +77,12 @@ export default class UruPlugin extends Plugin {
 		this.addCommand({
 			id: "uru-restart-backend",
 			name: "Restart backend",
-			callback: () => void this.runSetup(),
+			callback: () => void this.restartBackend(),
+		});
+		this.addCommand({
+			id: "uru-delete-data",
+			name: "Delete all Uru data (models, venv, index)",
+			callback: () => void this.deleteAllData(),
 		});
 
 		if (Platform.isMobile) {
@@ -83,8 +91,11 @@ export default class UruPlugin extends Plugin {
 			return;
 		}
 
-		// Boot the backend in the background; never block plugin load.
-		this.app.workspace.onLayoutReady(() => void this.boot());
+		// First run → guided setup modal; otherwise boot silently in background.
+		this.app.workspace.onLayoutReady(() => {
+			if (this.settings.installed) void this.bootSilent();
+			else this.openSetup();
+		});
 	}
 
 	async onunload(): Promise<void> {
@@ -107,27 +118,62 @@ export default class UruPlugin extends Plugin {
 		return join(realpathSync(pluginAbs), "sidecar");
 	}
 
-	private async boot(): Promise<void> {
-		try {
-			this.setStatus("starting", "resolving backend");
-			if (!this.settings.vaultKey) {
-				this.settings.vaultKey = randomUUID();
-				await this.saveSettings();
-			}
-			const vaultDir = vaultDataDir(this.settings.vaultKey);
-			mkdirSync(vaultDir, { recursive: true });
+	/** Resolve the backend, start the sidecar, wire indexing. Throws on failure. */
+	async runBackend(onLog: (s: string) => void): Promise<void> {
+		this.setStatus("starting", "resolving backend");
+		if (!this.settings.vaultKey) {
+			this.settings.vaultKey = randomUUID();
+			await this.saveSettings();
+		}
+		const vaultDir = vaultDataDir(this.settings.vaultKey);
+		mkdirSync(vaultDir, { recursive: true });
+		const backend = await ensureBackend({
+			pluginSidecarDir: this.pluginSidecarDir(),
+			runtimeDir: runtimeDir(),
+			log: onLog,
+		});
+		await this.persistBackend(backend);
+		await this.startSidecar(backend, vaultDir);
+		await this.startIndexer(vaultDir);
+	}
 
-			const backend = await ensureBackend({
-				pluginSidecarDir: this.pluginSidecarDir(),
-				runtimeDir: runtimeDir(),
-				log: (l) => this.setStatus("starting", l),
-			});
-			await this.persistBackend(backend);
-			await this.startSidecar(backend, vaultDir);
-			await this.startIndexer(vaultDir);
+	/** Background boot (already-installed path); surfaces errors to the status bar. */
+	private async bootSilent(): Promise<void> {
+		try {
+			await this.runBackend((l) => this.setStatus("starting", l));
 		} catch (e) {
 			this.setStatus("error", (e as Error).message);
-			new Notice(`Uru setup failed: ${(e as Error).message}`);
+			new Notice(`Uru backend failed: ${(e as Error).message}`);
+		}
+	}
+
+	openSetup(): void {
+		new SetupModal(this.app, this).open();
+	}
+
+	private async restartBackend(): Promise<void> {
+		if (this.manager) {
+			await this.manager.stop();
+			this.manager = null;
+		}
+		await this.bootSilent();
+	}
+
+	private async deleteAllData(): Promise<void> {
+		if (this.manager) {
+			await this.manager.stop();
+			this.manager = null;
+		}
+		this.indexer = null;
+		try {
+			rmSync(appDataDir(), { recursive: true, force: true });
+			this.settings.installed = false;
+			this.settings.namespaceId = null;
+			await this.saveSettings();
+			this.setStatus("uninstalled", "data deleted");
+			new Notice("Uru: deleted all data (models, venv, index). Re-run setup to reinstall.");
+		} catch (e) {
+			new Notice(`Uru: cleanup failed — ${(e as Error).message}`);
 		}
 	}
 
@@ -203,7 +249,7 @@ export default class UruPlugin extends Plugin {
 	async runSetup(): Promise<void> {
 		if (this.manager) await this.manager.stop();
 		this.manager = null;
-		await this.boot();
+		this.openSetup();
 	}
 
 	indexVault(): void {

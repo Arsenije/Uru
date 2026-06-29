@@ -8,6 +8,34 @@ No cloud, no API keys: entity/relationship extraction and embeddings run on loca
 GGUF models; storage is an embedded SQLite + LanceDB database that never leaves
 your machine. Desktop only (it runs a local Python backend).
 
+## Install (beta)
+
+No prerequisites — Uru downloads everything it needs (a Python runtime, the
+llama.cpp binary, and the models). Desktop only (macOS / Windows / Linux).
+
+1. Download `uru-v<version>.zip` from the [Releases](../../releases) page.
+2. Extract the `uru/` folder into `<your-vault>/.obsidian/plugins/` (so you have
+   `.obsidian/plugins/uru/main.js`).
+3. In Obsidian: **Settings → Community plugins → enable Uru**.
+4. A **setup dialog** opens. Pick **Lite** (fast semantic search) or **Full**
+   (also builds a knowledge graph — slower on a local model), then
+   **Install & start**. First run downloads ~3 GB; subsequent launches are fast.
+5. When the status bar shows **`Uru ✓`**, run **"Uru: Index vault"**, then
+   **"Uru: Recall"** or open the **chat** (💬 ribbon icon).
+
+The backend (venv, models, database) lives outside your vault in per-user
+app-data, so it survives plugin updates and is never touched by Obsidian Sync.
+
+## Troubleshooting
+
+- **Stuck on "starting" / setup failed** — the setup dialog has a **Copy
+  diagnostics** button (also in Settings → Uru). Paste that when reporting an issue.
+- **Indexing is slow** — Full-KG runs the chat model on every note (~5–30s each).
+  Switch to **Lite** in Settings for near-instant indexing, or use
+  **"Uru: Stop indexing"** any time.
+- **Start over** — **"Uru: Delete all Uru data"** removes the models, venv, and
+  index; re-enable setup from Settings → Uru → "Re-run setup".
+
 ## How it works
 
 ```

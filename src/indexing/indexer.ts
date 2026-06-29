@@ -154,6 +154,7 @@ export class Indexer {
 			let done = 0;
 			let failed = 0;
 			let stopped = false;
+			const failures: string[] = [];
 			for (const doc of docs) {
 				if (this.cancelRequested) {
 					stopped = true;
@@ -167,12 +168,14 @@ export class Indexer {
 						docId: res.document_id,
 						lastIndexed: Date.now(),
 					});
-				} catch {
+				} catch (e) {
 					failed++;
+					failures.push(`${doc.external_id}: ${(e as Error).message}`);
 				}
 				done++;
 				if (done % 10 === 0) await this.store.save();
 			}
+			if (failures.length) console.warn("[Uru] notes that failed to index:\n" + failures.join("\n"));
 			await this.store.save();
 			new Notice(
 				stopped
