@@ -54,6 +54,11 @@ export class HashStore {
 		return Object.keys(this.entries);
 	}
 
+	/** Number of notes currently tracked as indexed. */
+	count(): number {
+		return Object.keys(this.entries).length;
+	}
+
 	async save(): Promise<void> {
 		if (!this.loaded) return;
 		await this.adapter.write(this.path, JSON.stringify(this.entries));

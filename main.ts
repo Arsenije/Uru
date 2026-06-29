@@ -182,6 +182,11 @@ export default class UruPlugin extends Plugin {
 		return this.manager?.diagnostics ?? "(backend not started)";
 	}
 
+	/** Number of notes currently tracked as indexed. */
+	indexedCount(): number {
+		return this.indexer?.indexedCount() ?? 0;
+	}
+
 	async runSetup(): Promise<void> {
 		if (this.manager) await this.manager.stop();
 		this.manager = null;

@@ -53,6 +53,11 @@ export class Indexer {
 		return this.indexing;
 	}
 
+	/** Number of notes currently tracked as indexed. */
+	indexedCount(): number {
+		return this.store.count();
+	}
+
 	/** Request the in-progress full index to stop after the current note. */
 	stop(): void {
 		if (this.indexing) this.cancelRequested = true;
@@ -140,7 +145,7 @@ export class Indexer {
 			}
 
 			if (docs.length === 0) {
-				new Notice("Uru: nothing to index");
+				new Notice("Uru: everything indexed");
 				return true;
 			}
 

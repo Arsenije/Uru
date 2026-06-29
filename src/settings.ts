@@ -124,9 +124,10 @@ export class UruSettingTab extends PluginSettingTab {
 			});
 
 		const last = s.lastIndexedAt ? new Date(s.lastIndexedAt).toLocaleString() : "never";
+		const count = this.plugin.indexedCount();
 		new Setting(containerEl)
 			.setName("Re-index vault")
-			.setDesc(`Last indexed: ${last}.`)
+			.setDesc(`${count} files indexed. Last indexed: ${last}.`)
 			.addButton((b) =>
 				b
 					.setCta()
