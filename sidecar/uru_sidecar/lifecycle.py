@@ -162,6 +162,67 @@ class SidecarRuntime:
             on_progress=on_progress,
         )
 
+    # ---- chat (RAG) ------------------------------------------------------
+
+    _CHAT_SYSTEM = (
+        "You are a helpful assistant answering questions about the user's personal "
+        "Obsidian vault. Use ONLY the provided context notes to answer. Cite the "
+        "notes you draw on by their bracketed number, e.g. [1]. If the context does "
+        "not contain the answer, say you couldn't find it in the vault."
+    )
+
+    async def _chat_context(self, query: str, limit: int):
+        res = await self.recall(query, limit=limit)
+        docs = {d.id: d for d in res.documents}
+        blocks: list[str] = []
+        citations: list[dict] = []
+        seen: set[str] = set()
+        for i, c in enumerate(res.chunks[:limit], 1):
+            doc = docs.get(c.document_id)
+            title = (getattr(doc, "title", None) or getattr(doc, "external_id", None) or "source")
+            blocks.append(f"[{i}] {title}\n{c.content.strip()}")
+            ext = getattr(doc, "external_id", None)
+            if ext and ext not in seen:
+                seen.add(ext)
+                citations.append({"index": i, "external_id": ext, "title": title})
+        return "\n\n".join(blocks) if blocks else "(no matching notes)", citations
+
+    def _chat_messages(self, query: str, context: str, history: list[dict] | None):
+        msgs = [{"role": "system", "content": self._CHAT_SYSTEM}]
+        for h in (history or [])[-6:]:
+            msgs.append({"role": h["role"], "content": h["content"]})
+        msgs.append({"role": "user", "content": f"Context notes:\n\n{context}\n\n---\nQuestion: {query}"})
+        return msgs
+
+    async def chat_once(self, query: str, history=None, limit: int = 8) -> dict:
+        import litellm
+
+        context, citations = await self._chat_context(query, limit)
+        resp = await litellm.acompletion(
+            model="openai/uru-chat",
+            messages=self._chat_messages(query, context, history),
+            timeout=self.config.llm_timeout,
+        )
+        answer = (resp.choices[0].message.content or "") if resp.choices else ""
+        return {"answer": answer, "citations": citations}
+
+    async def chat_stream(self, query: str, history=None, limit: int = 8):
+        import litellm
+
+        context, citations = await self._chat_context(query, limit)
+        yield {"event": "sources", "citations": citations}
+        stream = await litellm.acompletion(
+            model="openai/uru-chat",
+            messages=self._chat_messages(query, context, history),
+            timeout=self.config.llm_timeout,
+            stream=True,
+        )
+        async for part in stream:
+            delta = part.choices[0].delta.content if part.choices else None
+            if delta:
+                yield {"event": "token", "text": delta}
+        yield {"event": "done"}
+
     async def forget(self, *, external_id: str | None = None,
                      document_id: str | None = None) -> bool:
         from uuid import UUID

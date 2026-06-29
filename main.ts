@@ -15,6 +15,7 @@ import { SidecarManager } from "./src/sidecar/manager";
 import type { SidecarClient, HealthResponse } from "./src/sidecar/client";
 import { Indexer, type IndexStatus } from "./src/indexing/indexer";
 import { RecallView, URU_RECALL_VIEW } from "./src/views/recallView";
+import { ChatView, URU_CHAT_VIEW } from "./src/views/chatView";
 
 export default class UruPlugin extends Plugin {
 	settings!: UruSettings;
@@ -33,12 +34,19 @@ export default class UruPlugin extends Plugin {
 		this.setStatus("uninstalled", "not started");
 
 		this.registerView(URU_RECALL_VIEW, (leaf: WorkspaceLeaf) => new RecallView(leaf, this));
+		this.registerView(URU_CHAT_VIEW, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
 		this.addRibbonIcon("search", "Uru: recall", () => void this.openRecall());
+		this.addRibbonIcon("message-square", "Uru: chat", () => void this.openChat());
 
 		this.addCommand({
 			id: "uru-recall",
 			name: "Recall from knowledge graph",
 			callback: () => void this.openRecall(),
+		});
+		this.addCommand({
+			id: "uru-chat",
+			name: "Chat with your vault",
+			callback: () => void this.openChat(),
 		});
 		this.addCommand({
 			id: "uru-index-vault",
@@ -223,6 +231,20 @@ export default class UruPlugin extends Plugin {
 		this.app.workspace.revealLeaf(leaf);
 		const view = leaf.view;
 		if (view instanceof RecallView) view.focusInput();
+	}
+
+	private async openChat(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(URU_CHAT_VIEW);
+		let leaf: WorkspaceLeaf;
+		if (existing.length) {
+			leaf = existing[0];
+		} else {
+			leaf = this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf(true);
+			await leaf.setViewState({ type: URU_CHAT_VIEW, active: true });
+		}
+		this.app.workspace.revealLeaf(leaf);
+		const view = leaf.view;
+		if (view instanceof ChatView) view.focusInput();
 	}
 
 	private setStatus(status: typeof this.status, detail: string): void {

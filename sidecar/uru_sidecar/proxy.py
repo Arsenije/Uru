@@ -13,6 +13,7 @@ import json
 
 import httpx
 from fastapi import APIRouter, Request, Response
+from fastapi.responses import StreamingResponse
 
 # llama.cpp can be slow on a cold model load + long extraction prompts.
 _TIMEOUT = httpx.Timeout(600.0, connect=10.0)
@@ -35,7 +36,27 @@ def build_proxy_router(chat_base: str, embed_base: str) -> APIRouter:
 
     @router.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
-        return await _forward(f"{chat_base}/v1/chat/completions", await request.body())
+        body = await request.body()
+        streaming = False
+        try:
+            streaming = bool(json.loads(body).get("stream"))
+        except (json.JSONDecodeError, ValueError):
+            pass
+        target = f"{chat_base}/v1/chat/completions"
+        if not streaming:
+            return await _forward(target, body)
+
+        # Pass the upstream SSE through unbuffered so tokens arrive incrementally.
+        async def upstream():
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                async with client.stream(
+                    "POST", target, content=body,
+                    headers={"content-type": "application/json"},
+                ) as r:
+                    async for chunk in r.aiter_raw():
+                        yield chunk
+
+        return StreamingResponse(upstream(), media_type="text/event-stream")
 
     @router.post("/v1/completions")
     async def completions(request: Request) -> Response:

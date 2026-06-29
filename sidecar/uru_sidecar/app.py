@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .lifecycle import SidecarRuntime
-from .models import BatchRequest, ForgetRequest, RecallRequest, RememberRequest
+from .models import BatchRequest, ChatRequest, ForgetRequest, RecallRequest, RememberRequest
 from .serialize import batch_to_dict, recall_to_dict, remember_to_dict
 
 log = logging.getLogger("uru.sidecar")
@@ -65,6 +65,18 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
             title=req.title, metadata=req.metadata,
         )
         return remember_to_dict(result)
+
+    @app.post("/chat", dependencies=[Depends(require_auth)])
+    async def chat(req: ChatRequest):
+        history = [m.model_dump() for m in req.history]
+        if not req.stream:
+            return await runtime.chat_once(req.query, history, req.limit)
+
+        async def stream():
+            async for ev in runtime.chat_stream(req.query, history, req.limit):
+                yield json.dumps(ev) + "\n"
+
+        return StreamingResponse(stream(), media_type="application/x-ndjson")
 
     @app.post("/forget", dependencies=[Depends(require_auth)])
     async def forget(req: ForgetRequest) -> dict:

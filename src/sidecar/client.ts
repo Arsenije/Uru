@@ -74,6 +74,27 @@ export interface BatchDocument {
 	metadata?: Record<string, unknown>;
 }
 
+export interface ChatCitation {
+	index: number;
+	external_id: string;
+	title: string;
+}
+
+export interface ChatMessage {
+	role: "user" | "assistant";
+	content: string;
+}
+
+export type ChatEvent =
+	| { event: "sources"; citations: ChatCitation[] }
+	| { event: "token"; text: string }
+	| { event: "done" };
+
+export interface ChatResult {
+	answer: string;
+	citations: ChatCitation[];
+}
+
 /** Typed HTTP client for the Uru sidecar control API. */
 export class SidecarClient {
 	constructor(
@@ -115,6 +136,39 @@ export class SidecarClient {
 
 	async forget(externalId: string): Promise<{ deleted: boolean }> {
 		return this.post("/forget", { external_id: externalId });
+	}
+
+	/**
+	 * Streaming chat (RAG). Yields sources, then answer tokens. Uses fetch for
+	 * the streaming body; callers should fall back to chatSync() if it throws.
+	 */
+	async *chatStream(query: string, history: ChatMessage[]): AsyncGenerator<ChatEvent> {
+		const resp = await fetch(`${this.baseUrl}/chat`, {
+			method: "POST",
+			headers: { "content-type": "application/json", ...this.authHeader },
+			body: JSON.stringify({ query, history, stream: true }),
+		});
+		if (!resp.ok || !resp.body) throw new Error(`chat failed: HTTP ${resp.status}`);
+		const reader = resp.body.getReader();
+		const decoder = new TextDecoder();
+		let buf = "";
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buf += decoder.decode(value, { stream: true });
+			let nl: number;
+			while ((nl = buf.indexOf("\n")) >= 0) {
+				const line = buf.slice(0, nl).trim();
+				buf = buf.slice(nl + 1);
+				if (line) yield JSON.parse(line) as ChatEvent;
+			}
+		}
+		if (buf.trim()) yield JSON.parse(buf.trim()) as ChatEvent;
+	}
+
+	/** Non-streaming chat via requestUrl (fallback when fetch streaming is blocked). */
+	async chatSync(query: string, history: ChatMessage[]): Promise<ChatResult> {
+		return this.post<ChatResult>("/chat", { query, history, stream: false });
 	}
 
 	async shutdown(): Promise<void> {

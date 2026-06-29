@@ -32,3 +32,15 @@ class BatchRequest(BaseModel):
 class ForgetRequest(BaseModel):
     external_id: str | None = None
     document_id: str | None = None
+
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class ChatRequest(BaseModel):
+    query: str
+    history: list[ChatMessage] = Field(default_factory=list)
+    limit: int = 8
+    stream: bool = True
