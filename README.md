@@ -1,57 +1,175 @@
 # Uru
 
-An [Obsidian](https://obsidian.md) plugin that turns your vault into a queryable
-**knowledge graph + semantic search index**, powered by the [khora](./khora)
-library — running **fully local and offline** via [llama.cpp](https://llama-cpp.com/).
+**Ask your notes anything — and get answers grounded in what you actually wrote, completely offline.**
 
-No cloud, no API keys: entity/relationship extraction and embeddings run on local
-GGUF models; storage is an embedded SQLite + LanceDB database that never leaves
-your machine. Desktop only (it runs a local Python backend).
+Uru turns your [Obsidian](https://obsidian.md) vault into a queryable **knowledge graph + semantic search index**. Drop in your notes and Uru reads them, links the people, projects, and ideas inside, and lets you *recall* or *chat* with the whole vault — with citations back to the exact notes. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
 
-## Install (beta)
+It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first knowledge-graph + vector-search library. Obsidian can't run Python, so Uru ships a tiny local backend that drives khora for you — you never have to touch it.
 
-No prerequisites — Uru downloads everything it needs (a Python runtime, the
-llama.cpp binary, and the models). Desktop only (macOS / Windows / Linux).
+<!-- Drop a screenshot of the recall/chat panel here: ![Uru](docs/screenshot.png) -->
 
-1. Download `uru-v<version>.zip` from the [Releases](../../releases) page.
-2. Extract the `uru/` folder into `<your-vault>/.obsidian/plugins/` (so you have
-   `.obsidian/plugins/uru/main.js`).
-3. In Obsidian: **Settings → Community plugins → enable Uru**.
-4. A **setup dialog** opens. Pick **Lite** (fast semantic search) or **Full**
-   (also builds a knowledge graph — slower on a local model), then
-   **Install & start**. First run downloads ~3 GB; subsequent launches are fast.
-5. When the status bar shows **`Uru ✓`**, run **"Uru: Index vault"**, then
-   **"Uru: Recall"** or open the **chat** (💬 ribbon icon).
+## What you can do
 
-The backend (venv, models, database) lives outside your vault in per-user
-app-data, so it survives plugin updates and is never touched by Obsidian Sync.
+- **Recall.** Ask a question and get the most relevant passages from across your vault — semantic, not keyword. Each result links back to its note.
+- **Chat with your vault.** A RAG chat panel that answers from your notes and cites them by `[1]`, `[2]`. Scope it to the whole vault or just the current note.
+- **Build a knowledge graph.** In Full mode, Uru extracts entities (people, orgs, concepts, places…) and relationships from each note, so recall can follow connections, not just similarity.
+- **Index automatically.** New and changed notes are picked up as you write; deletes and renames are handled too. No manual re-sync.
+- **Stay private.** No account, no API keys, no network calls after the one-time model download. Your notes never leave your computer.
+
+## Get started
+
+> 💡 **Installing with an AI assistant?** Hand it the [For AI assistants](#for-ai-assistants) section below — it's a deterministic, copy-paste procedure with explicit success checks. Most people install Uru this way.
+
+**Requirements:** Obsidian on **desktop** (macOS / Windows / Linux — Uru runs a local backend, so mobile isn't supported), and **[Node.js](https://nodejs.org) 18+** *only if you build from source*. No Python, no GPU, no manual model setup — Uru downloads everything it needs on first run.
+
+### Install manually
+
+1. **Get the plugin files.** Either download `uru-v<version>.zip` from the [Releases](../../releases) page, **or** build from source:
+   ```bash
+   git clone https://github.com/Arsenije/Uru.git
+   cd Uru
+   npm install
+   npm run build        # produces main.js
+   ```
+2. **Drop it into your vault.** Create `<your-vault>/.obsidian/plugins/uru/` and place `main.js`, `manifest.json`, and `styles.css` inside it (from the release zip or the repo root after building).
+3. **Enable it.** In Obsidian: **Settings → Community plugins → enable Uru**.
+4. **Run setup.** A dialog opens — pick **Lite** (fast semantic search) or **Full** (also builds the knowledge graph), then **Install & start**. The first run downloads ~3 GB and sets up a private Python environment. This is one-time; later launches are fast.
+5. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Recall"** or open the chat (💬 ribbon icon).
+
+### For AI assistants
+
+This procedure is safe to run end-to-end. Steps 1–2 are shell commands; steps 3–5 happen inside Obsidian's GUI, so **stop after step 2 and tell the user exactly what to click.**
+
+```
+GOAL: Install the Uru Obsidian plugin into the user's vault.
+
+INPUTS YOU NEED FROM THE USER:
+  - VAULT  = absolute path to their Obsidian vault (the folder containing `.obsidian/`)
+
+STEP 1 — build the plugin (requires Node.js 18+):
+  git clone https://github.com/Arsenije/Uru.git
+  cd Uru
+  npm install
+  npm run build
+  # SUCCESS CHECK: `main.js` now exists in the repo root.
+
+STEP 2 — deploy into the vault (do NOT put it anywhere else):
+  mkdir -p "<VAULT>/.obsidian/plugins/uru"
+  cp main.js manifest.json styles.css "<VAULT>/.obsidian/plugins/uru/"
+  # SUCCESS CHECK: those three files exist under .obsidian/plugins/uru/.
+
+STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
+  Tell them: "Open Obsidian → Settings → Community plugins → enable 'Uru'.
+  A setup dialog appears — choose Lite (fast) or Full (knowledge graph),
+  then click 'Install & start'. The first run downloads ~3 GB; wait for it."
+
+STEP 4 — tell them the success signal:
+  The Obsidian status bar shows `Uru ✓`. If it shows `Uru ✕`, the setup
+  dialog (and Settings → Uru) has a "Copy diagnostics" button — ask for that text.
+
+STEP 5 — tell them how to use it:
+  Run the command "Uru: Index vault", then "Uru: Recall" or the 💬 chat icon.
+
+DO NOT:
+  - Try to install on Obsidian mobile (desktop only).
+  - Place files outside `<VAULT>/.obsidian/plugins/uru/`.
+  - Install Python, llama.cpp, or models by hand — Uru bootstraps them itself.
+```
+
+**Facts for assistants** (stable, machine-readable):
+
+| Key | Value |
+|---|---|
+| Plugin id | `uru` |
+| Plugin files to deploy | `main.js`, `manifest.json`, `styles.css` |
+| Deploy target | `<VAULT>/.obsidian/plugins/uru/` |
+| Build command | `npm install && npm run build` |
+| Platforms | macOS, Windows, Linux (desktop only; **no mobile**) |
+| Runtime prerequisites | None — Python 3.13, llama.cpp, and models auto-download on first run |
+| First-run download | ~3 GB (chat model + embedding model + llama.cpp runtime) |
+| Ready signal | Status bar reads `Uru ✓` |
+| Error signal | Status bar reads `Uru ✕`; use the "Copy diagnostics" button |
+| Backend/data location | Outside the vault, in per-user app-data (see [Privacy](#privacy)) |
+
+## Privacy
+
+This is the whole point of Uru: **everything happens on your own computer.** Entity extraction and embeddings run on local GGUF models through llama.cpp; storage is an embedded SQLite + LanceDB database. No account, no API keys, and — after the one-time model download — no network calls. Your notes are never copied or uploaded.
+
+The backend (the Python environment, models, llama.cpp binary, and the index/database) lives **outside your vault**, in per-user app-data, so it survives plugin updates and is never touched by Obsidian Sync:
+
+| OS | Location |
+|---|---|
+| macOS | `~/Library/Application Support/uru` |
+| Windows | `%LOCALAPPDATA%\uru` |
+| Linux | `$XDG_DATA_HOME/uru` (or `~/.local/share/uru`) |
+
+To wipe everything (models, environment, index), run the command **"Uru: Delete all Uru data"**.
+
+## Hardware
+
+| Your setup | What to expect |
+|---|---|
+| **Apple Silicon (M1–M4)** | Best experience — chat/extraction run on the Metal GPU. Lite indexing is near-instant; Full-KG is comfortably usable. |
+| **Intel Macs** | CPU-only. Lite is fine; Full-KG indexing is slow (large vaults take a while). |
+| **Windows / Linux** | CPU builds of llama.cpp. Lite is fine; Full-KG is slow — index overnight or use Lite. |
+| **Memory** | A few GB of RAM while running (a 3B chat model plus an embedding model stay resident). Closing the panels lets the backend idle-shut-down after ~2 min. |
+
+## Lite vs Full
+
+You choose this at setup and can change it later in **Settings → Uru** (then restart the backend and force-reindex).
+
+- **Lite** — embeddings only. Fast, cheap, near-instant indexing. Great semantic recall and chat. No graph.
+- **Full** — everything in Lite **plus** a knowledge graph: Uru runs the chat model on each note (~5–30s per note locally) to extract entities and relationships, so recall can follow connections between notes.
+
+Switching modes re-extracts affected notes automatically on the next **Force re-index** — no manual cleanup needed.
 
 ## Troubleshooting
 
-- **Stuck on "starting" / setup failed** — the setup dialog has a **Copy
-  diagnostics** button (also in Settings → Uru). Paste that when reporting an issue.
-- **Indexing is slow** — Full-KG runs the chat model on every note (~5–30s each).
-  Switch to **Lite** in Settings for near-instant indexing, or use
-  **"Uru: Stop indexing"** any time.
-- **Start over** — **"Uru: Delete all Uru data"** removes the models, venv, and
-  index; re-enable setup from Settings → Uru → "Re-run setup".
+- **Stuck on "starting" / setup failed** — the setup dialog (and Settings → Uru) has a **Copy diagnostics** button. Paste that when reporting an issue.
+- **`Uru ✕` after it was working** — an inference server may have crashed; Uru restarts it automatically and the badge returns to `Uru ✓`. If it stays red, grab diagnostics.
+- **Indexing is slow** — that's Full-KG running the model on every note. Switch to **Lite** in Settings, or run **"Uru: Stop indexing"** any time.
+- **Start over** — **"Uru: Delete all Uru data"** removes the models, environment, and index; re-enable from Settings → Uru → "Re-run setup".
 
-## How it works
+## Changelog
+
+**0.1.0 — beta**
+- First public beta: local knowledge-graph + semantic search and RAG chat for Obsidian, fully offline.
+- Hardened bootstrap (self-repairs a partial install), llama-server crash supervision with a truthful status badge, automatic Lite↔Full re-extraction, and revision-pinned model downloads.
+
+## How it works (for the curious)
 
 ```
 Obsidian plugin (TypeScript)
   → spawns + Bearer-auth HTTP →  uru_sidecar (Python, FastAPI)
-                                   ├─ khora (sqlite_lance: SQLite + LanceDB)
+                                   ├─ khora  (sqlite_lance: SQLite + LanceDB)
                                    └─ proxy → 2× llama.cpp servers (chat + embed)
 ```
 
-khora is a pure Python library, so the plugin drives it through a local sidecar.
-The sidecar runs two single-model llama.cpp servers (a chat model for extraction,
-an embedding model) behind a one-URL OpenAI-compatible proxy — see
-[`sidecar/`](./sidecar). Default models: `Qwen2.5-3B-Instruct` (chat) and
-`mxbai-embed-large-v1` (embeddings, 1024-dim).
+khora is a pure-Python library, so the plugin drives it through a small local **sidecar**. The sidecar runs two single-model `llama-server` processes — a chat model (used for extraction and RAG answers) and an embedding model — behind a one-URL, OpenAI-compatible proxy, then points khora at them. It supervises those processes and restarts either one if it dies, and idle-shuts-down when you're not using Uru.
 
-## Layout
+**Default models** (~3 GB total):
+- Chat / extraction: `Qwen2.5-3B-Instruct` (Q4_K_M GGUF)
+- Embeddings: `mxbai-embed-large-v1` (f16 GGUF, 1024-dim — this fixes the vector dimension, so changing it requires a full re-index)
+
+<details>
+<summary><b>Build & develop from source</b></summary>
+
+```bash
+npm install
+npm run dev          # watch-build main.js
+npm run build        # production build + typecheck
+```
+
+The backend bootstraps on first run (`uv` installs Python 3.13 + khora + llama.cpp and downloads the models). In this repo a dev venv (`sidecar/.venv`) and cached models (`sidecar/.models`) are reused automatically **if they match the pinned khora version**; otherwise Uru falls through to a clean app-data bootstrap.
+
+Sidecar smoke test (remember → recall → forget):
+
+```bash
+cd sidecar
+PYTHONPATH=. .venv/bin/python scripts/smoke_sidecar.py
+```
+
+Repo layout:
 
 ```
 Uru/
@@ -60,35 +178,13 @@ Uru/
 │   ├── bootstrap/uv.ts  # uv-based Python/khora bootstrap + model download
 │   ├── sidecar/         # process manager + typed HTTP client
 │   ├── indexing/        # full + incremental vault indexing (hash-gated)
-│   ├── views/           # recall results panel
+│   ├── views/           # recall + chat panels
 │   └── settings.ts      # settings tab
-├── sidecar/             # Python sidecar (FastAPI + llama.cpp supervisor)
-│   └── uru_sidecar/
-└── khora/               # vendored khora library
+└── sidecar/             # Python sidecar (FastAPI + llama.cpp supervisor)
+    └── uru_sidecar/
 ```
 
-## Develop
-
-```bash
-npm install
-npm run dev          # watch-build main.js
-```
-
-The backend bootstraps on first run (uv installs Python 3.13 + khora + llama.cpp
-and downloads the models). In this repo a dev venv (`sidecar/.venv`) and cached
-models (`sidecar/.models`) are reused automatically if present.
-
-Sidecar tests:
-
-```bash
-cd sidecar
-PYTHONPATH=. .venv/bin/python scripts/smoke_sidecar.py   # remember→recall→forget
-```
-
-## Status
-
-MVP: local backend, full-KG indexing (initial + incremental), semantic recall
-panel, settings. See `sidecar/` for the validated khora↔llama.cpp bridge.
+</details>
 
 ## License
 
