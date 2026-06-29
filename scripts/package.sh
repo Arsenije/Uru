@@ -17,4 +17,4 @@ cp sidecar/uru_sidecar/*.py "$OUT/sidecar/uru_sidecar/"
 
 ( cd dist && zip -rq "uru-v$VER.zip" uru )
 echo "built dist/uru-v$VER.zip"
-unzip -l "dist/uru-v$VER.zip" | tail -n +4 | head -n -2
+unzip -l "dist/uru-v$VER.zip"
