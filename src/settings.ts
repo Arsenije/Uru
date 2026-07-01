@@ -23,6 +23,14 @@ export interface UruSettings {
 	ignoreGlobs: string[];
 	includeFrontmatter: boolean;
 	autoIndexOnStartup: boolean;
+	/**
+	 * EXPERIMENTAL, default off. Route indexing through the sidecar's streaming
+	 * batch endpoint with bounded extraction — caps per-note LLM output length and
+	 * prunes low-value co-occurrence graph noise, so Deep-mode notes can't run for
+	 * minutes. Off = today's per-note `/remember` path. Changing this restarts the
+	 * backend (the sidecar reads the mode once at launch).
+	 */
+	batchIndexing: boolean;
 	/** Epoch ms of the last completed full index, or null if never. */
 	lastIndexedAt: number | null;
 	/** True while a full run is in progress; cleared only on clean completion, so
@@ -48,6 +56,7 @@ export const DEFAULT_SETTINGS: UruSettings = {
 	ignoreGlobs: [".obsidian/**", ".trash/**", "templates/**"],
 	includeFrontmatter: false,
 	autoIndexOnStartup: false,
+	batchIndexing: false,
 	lastIndexedAt: null,
 	indexInterrupted: false,
 	indexRemaining: null,
@@ -223,6 +232,21 @@ export class UruSettingTab extends PluginSettingTab {
 				});
 				t.inputEl.rows = 4;
 			});
+
+		new Setting(advanced)
+			.setName("Fast Deep indexing (experimental)")
+			.setDesc(
+				"Index in bounded batches: caps how long the model runs per note and trims " +
+					"low-value connections, so Deep indexing can't stall for minutes on a single " +
+					"note. Experimental — leave off unless you're testing it. Restart Uru to apply.",
+			)
+			.addToggle((t) =>
+				t.setValue(s.batchIndexing).onChange(async (v) => {
+					s.batchIndexing = v;
+					await this.plugin.saveSettings();
+					new Notice("Uru: restart the backend (Settings → Re-run setup, or reload) to apply.", 6000);
+				}),
+			);
 
 		// ---- Models (collapsed) --------------------------------------------
 		const models = containerEl.createEl("details", { cls: "uru-advanced" });

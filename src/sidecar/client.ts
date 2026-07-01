@@ -76,6 +76,13 @@ export interface BatchDocument {
 	metadata?: Record<string, unknown>;
 }
 
+/** Streamed events from the `/index/full` batch endpoint (NDJSON). */
+export type IndexFullEvent =
+	| { event: "progress"; completed: number; total: number }
+	| { event: "committed"; external_id: string; document_id: string | null; ok: boolean }
+	| { event: "done"; pruned?: number; processed?: number; skipped?: number; failed?: number }
+	| { event: "error"; message: string };
+
 export interface ChatCitation {
 	index: number;
 	external_id: string;
@@ -145,6 +152,42 @@ export class SidecarClient {
 
 	async forget(externalId: string): Promise<{ deleted: boolean }> {
 		return this.post("/forget", { external_id: externalId });
+	}
+
+	/**
+	 * Stream a batch index via the sidecar's `/index/full` (NDJSON over fetch, like
+	 * chatStream). Yields progress, per-note commit events, and a terminal summary.
+	 * Used only by the experimental bounded-batch indexing path.
+	 */
+	async *indexFull(docs: BatchDocument[]): AsyncGenerator<IndexFullEvent> {
+		const resp = await fetch(`${this.baseUrl}/index/full`, {
+			method: "POST",
+			headers: { "content-type": "application/json", ...this.authHeader },
+			body: JSON.stringify({
+				documents: docs.map((d) => ({
+					external_id: d.external_id,
+					content: d.content,
+					title: d.title ?? "",
+					metadata: d.metadata ?? {},
+				})),
+			}),
+		});
+		if (!resp.ok || !resp.body) throw new Error(`index/full failed: HTTP ${resp.status}`);
+		const reader = resp.body.getReader();
+		const decoder = new TextDecoder();
+		let buf = "";
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buf += decoder.decode(value, { stream: true });
+			let nl: number;
+			while ((nl = buf.indexOf("\n")) >= 0) {
+				const line = buf.slice(0, nl).trim();
+				buf = buf.slice(nl + 1);
+				if (line) yield JSON.parse(line) as IndexFullEvent;
+			}
+		}
+		if (buf.trim()) yield JSON.parse(buf.trim()) as IndexFullEvent;
 	}
 
 	/**

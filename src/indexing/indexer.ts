@@ -14,6 +14,21 @@ export interface IndexStatus {
 	startedAt: number;
 }
 
+/** Outcome of a full-index run. A run is only "complete" if it processed the
+ *  whole queue AND every note was durably recorded (`succeeded === total`,
+ *  `failed === 0`, not stopped) — this is what lets the caller decide whether to
+ *  clear the interrupted flag or keep the run resumable. */
+export interface FullIndexResult {
+	/** Notes that needed (re)indexing this run. */
+	total: number;
+	/** Notes recorded as indexed (a durable success). */
+	succeeded: number;
+	/** Notes that errored/timed out — NOT recorded, so a later run retries them. */
+	failed: number;
+	/** True if the user stopped the run before it finished the queue. */
+	stopped: boolean;
+}
+
 /**
  * Estimated seconds remaining, or null during warm-up (too few notes/too little
  * elapsed for a stable figure). Uses a cumulative average (notes/sec since the
@@ -137,20 +152,27 @@ export class Indexer {
 	 * Incremental full index: walks the vault but only (re)sends new/changed
 	 * notes (content-hash gate) and forgets deleted ones. Pass force=true to
 	 * re-index everything. Progress is reported via the status callback (status
-	 * bar); no per-note notifications. Returns true if it ran to completion.
+	 * bar); no per-note notifications. Returns per-note success/failure counts so
+	 * the caller can tell a clean finish from a partial one — a note is only
+	 * counted as `succeeded` once it's been durably recorded in the store, never
+	 * merely because it was attempted.
 	 */
-	async fullIndex(force = false): Promise<boolean> {
+	async fullIndex(force = false): Promise<FullIndexResult> {
 		const client = this.client();
 		if (!client) {
 			new Notice("Uru backend not ready");
-			return false;
+			return { total: 0, succeeded: 0, failed: 0, stopped: true };
 		}
 		if (this.indexing) {
 			new Notice("Uru is already indexing");
-			return false;
+			return { total: 0, succeeded: 0, failed: 0, stopped: true };
 		}
 		this.indexing = true;
 		this.cancelRequested = false;
+		let total = 0;
+		let succeeded = 0;
+		let failed = 0;
+		let stopped = false;
 		try {
 			const files = this.app.vault.getMarkdownFiles().filter((f) => !this.isIgnored(f.path));
 			const present = new Set(files.map((f) => f.path));
@@ -184,51 +206,101 @@ export class Indexer {
 				docs.push({ doc, forgetFirst });
 			}
 
-			if (docs.length === 0) {
+			total = docs.length;
+			if (total === 0) {
 				new Notice("Uru: everything indexed");
-				return true;
+				return { total: 0, succeeded: 0, failed: 0, stopped: false };
 			}
 
-			// Index per note via requestUrl (the proven path) — reliable in the
-			// Obsidian renderer; progress shown in the status bar only.
-			let done = 0;
-			let failed = 0;
-			let stopped = false;
 			const failures: string[] = [];
 			const startedAt = Date.now();
-			for (const { doc, forgetFirst } of docs) {
-				if (this.cancelRequested) {
-					stopped = true;
-					break;
+			if (this.settings.batchIndexing) {
+				// EXPERIMENTAL bounded-batch path: stream the whole change-set through
+				// the sidecar's /index/full, which caps per-note extraction output and
+				// prunes co-occurrence noise. We record ONLY notes the sidecar confirms
+				// committed, so the honest index-state contract is preserved.
+				for (const { doc, forgetFirst } of docs) {
+					if (forgetFirst) await client.forget(doc.external_id).catch(() => undefined);
 				}
-				this.onIndexStatus({ done, total: docs.length, current: doc.title ?? doc.external_id, startedAt });
+				const committed = new Map<string, string>();
 				try {
-					const res = await this.rememberWithRetry(client, doc, forgetFirst);
-					this.store.set(doc.external_id, {
-						hash: doc.metadata!.hash as string,
-						docId: res.document_id,
-						lastIndexed: Date.now(),
-						extractEntities: mode,
-					});
+					for await (const ev of client.indexFull(docs.map((d) => d.doc))) {
+						if (this.cancelRequested) {
+							stopped = true;
+							break;
+						}
+						if (ev.event === "progress") {
+							this.onIndexStatus({ done: ev.completed, total, current: `${ev.completed}/${ev.total}`, startedAt });
+						} else if (ev.event === "committed") {
+							if (ev.ok) committed.set(ev.external_id, ev.document_id ?? "");
+						} else if (ev.event === "error") {
+							throw new Error(ev.message);
+						}
+					}
 				} catch (e) {
-					failed++;
-					failures.push(`${doc.external_id}: ${(e as Error).message}`);
+					failures.push(`batch: ${(e as Error).message}`);
 				}
-				done++;
-				if (done % 10 === 0) await this.store.save();
+				for (const { doc } of docs) {
+					if (committed.has(doc.external_id)) {
+						this.store.set(doc.external_id, {
+							hash: doc.metadata!.hash as string,
+							docId: committed.get(doc.external_id) || "",
+							lastIndexed: Date.now(),
+							extractEntities: mode,
+						});
+						succeeded++;
+					}
+				}
+				// A completed (or errored) batch: uncommitted notes are failures for this
+				// run → retried next time. A user stop leaves the remainder unknown.
+				if (!stopped) failed = total - succeeded;
+			} else {
+				// Index per note via requestUrl (the proven path) — reliable in the
+				// Obsidian renderer; progress shown in the status bar only.
+				for (const { doc, forgetFirst } of docs) {
+					if (this.cancelRequested) {
+						stopped = true;
+						break;
+					}
+					const done = succeeded + failed;
+					this.onIndexStatus({ done, total, current: doc.title ?? doc.external_id, startedAt });
+					try {
+						const res = await this.rememberWithRetry(client, doc, forgetFirst);
+						// Only now — after a durable success — is the note recorded. A note
+						// the backend timed out on stays unrecorded, so the next run retries it.
+						this.store.set(doc.external_id, {
+							hash: doc.metadata!.hash as string,
+							docId: res.document_id,
+							lastIndexed: Date.now(),
+							extractEntities: mode,
+						});
+						succeeded++;
+					} catch (e) {
+						failed++;
+						failures.push(`${doc.external_id}: ${(e as Error).message}`);
+					}
+					if ((succeeded + failed) % 10 === 0) await this.store.save();
+				}
 			}
 			if (failures.length) console.warn("[Uru] notes that failed to index:\n" + failures.join("\n"));
 			await this.store.save();
-			new Notice(
-				stopped
-					? `Uru: stopped at ${done}/${docs.length}`
-					: `Uru: indexed ${done - failed}/${docs.length} notes` +
-							(failed ? ` (${failed} failed)` : ""),
-			);
-			return !stopped;
+			if (stopped) {
+				new Notice(`Uru: stopped — indexed ${succeeded} of ${total} note${total === 1 ? "" : "s"} so far.`);
+			} else if (failed) {
+				new Notice(
+					`Uru: indexed ${succeeded} of ${total} notes — ${failed} failed. ` +
+						'Run "Index new & changed" again to retry the rest.',
+					10000,
+				);
+			} else {
+				new Notice(`Uru: indexed ${succeeded} note${succeeded === 1 ? "" : "s"}.`);
+			}
+			return { total, succeeded, failed, stopped };
 		} catch (e) {
 			new Notice(`Uru: index failed — ${(e as Error).message}`);
-			return false;
+			// Report whatever we managed before the error, marked not-complete so the
+			// caller keeps the run resumable.
+			return { total, succeeded, failed, stopped: true };
 		} finally {
 			this.indexing = false;
 			this.cancelRequested = false;

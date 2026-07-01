@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Indexing no longer reports success it didn't achieve.** A note is now counted as indexed only once it's been durably recorded, and the run is marked complete only when the whole queue processed with zero failures. Previously the progress bar advanced on every *attempt* (so it could reach 100% while notes were actually failing), and any finish — even one where most notes failed — cleared the "resume" state. A run with failures now stays resumable, keeps an accurate indexed count, and ends with an honest "indexed X of N — Y failed, run again to retry the rest" message. (Deep-mode extraction can be slow enough that a note's request is dropped before it completes; this makes that visible and recoverable instead of silently losing the run's progress.)
+
+### Added
+- **Experimental "Fast Deep indexing" (default off)** in Settings → Uru → Advanced. When enabled, indexing streams through the sidecar's batch endpoint with **bounded extraction**: it caps how long the model runs per note (so a single dense note can't stall for minutes) and prunes the low-value co-occurrence graph noise Deep mode otherwise generates. Off by default — normal indexing is unchanged — and gated by a sidecar launch flag so it can't affect anyone who hasn't opted in. Still under validation; leave off unless you're testing it.
+
+### Changed
+- Sidecar package version bumped to `0.2.1` (aligns `pyproject.toml`/`__init__.py`/bootstrap and ships the new backend code to existing installs).
+- Added ignore rules for local Python dev/test artifacts (`.venv/`, `.coverage`, `.pytest_cache/`, `__pycache__/`, `*.pyc`) so ad-hoc sidecar test runs don't pollute the working tree or misdirect import-based checks.
+
 ## [0.1.6] — 2026-07-01
 
 ### Added

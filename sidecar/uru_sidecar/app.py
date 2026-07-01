@@ -116,7 +116,22 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
         async def run() -> None:
             try:
                 result = await runtime.remember_batch(docs, on_progress=on_progress)
-                await queue.put({"event": "done", **batch_to_dict(result)})
+                # remember_batch returns only aggregate counts, so resolve which
+                # notes are now durably present and emit a per-note commit event.
+                # The plugin records exactly the committed ones (honest index-state).
+                external_ids = [d["external_id"] for d in docs if d.get("external_id")]
+                committed = await runtime.committed_document_ids(external_ids)
+                for ext, doc_id in committed.items():
+                    await queue.put({
+                        "event": "committed",
+                        "external_id": ext,
+                        "document_id": doc_id,
+                        "ok": doc_id is not None,
+                    })
+                pruned = 0
+                if runtime.config.bounded_extraction:
+                    pruned = await asyncio.to_thread(runtime.prune_lightweight_edges)
+                await queue.put({"event": "done", "pruned": pruned, **batch_to_dict(result)})
             except Exception as exc:  # noqa: BLE001 — surface to the client
                 log.exception("index/full failed")
                 await queue.put({"event": "error", "message": str(exc)})

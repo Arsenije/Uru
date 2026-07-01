@@ -13,3 +13,11 @@ index-state.json
 
 # Release build output
 dist/
+
+# Local Python dev/test artifacts (sidecar/khora). The runtime venv + pinned
+# wheel live in per-user app-data; these are only produced by ad-hoc local runs.
+.venv/
+.coverage
+.pytest_cache/
+__pycache__/
+*.pyc

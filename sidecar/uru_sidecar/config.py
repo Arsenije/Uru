@@ -54,6 +54,17 @@ class SidecarConfig:
     llm_max_concurrent: int = 1
     llm_max_retries: int = 2
 
+    # EXPERIMENTAL bounded batch extraction (gated by --bounded-extraction). When
+    # on, /index/full caps the per-note LLM output length and prunes low-value
+    # co-occurrence edges, so one dense note can't run for minutes / emit thousands
+    # of junk relationships. Off = today's unbounded per-note behaviour.
+    bounded_extraction: bool = False
+    # Max entity/relationship extraction output tokens per LLM call. The junk runs
+    # generated 7k+ tokens/note; this bounds each call's wall-clock.
+    extraction_max_tokens: int = 1024
+    # Chunks per extraction LLM call (smaller ⇒ shorter, more predictable calls).
+    extraction_batch_size: int = 4
+
     # Self-shutdown if the plugin stops heartbeating (prevents orphaned backends
     # when Obsidian is force-quit). 0 disables.
     idle_timeout: int = 120
@@ -80,6 +91,11 @@ class SidecarConfig:
         )
         p.add_argument("--n-gpu-layers", type=int, default=-1)
         p.add_argument("--idle-timeout", type=int, default=120)
+        p.add_argument(
+            "--bounded-extraction",
+            action="store_true",
+            help="EXPERIMENTAL: cap per-note extraction output + prune co-occurrence noise.",
+        )
         ns = p.parse_args(argv)
         return cls(
             port=ns.port,
@@ -93,6 +109,7 @@ class SidecarConfig:
             extract_entities=not ns.no_extract_entities,
             n_gpu_layers=ns.n_gpu_layers,
             idle_timeout=ns.idle_timeout,
+            bounded_extraction=ns.bounded_extraction,
         )
 
     def khora_env(self, openai_base: str) -> dict[str, str]:
