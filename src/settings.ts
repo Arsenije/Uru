@@ -1,6 +1,6 @@
 import { App, ButtonComponent, PluginSettingTab, Setting, Notice } from "obsidian";
 import type UruPlugin from "../main";
-import type { IndexStatus } from "./indexing/indexer";
+import { etaSeconds, formatEta, type IndexStatus } from "./indexing/indexer";
 
 export interface UruSettings {
 	/** Set after bootstrap: interpreter inside the uv venv. */
@@ -25,6 +25,11 @@ export interface UruSettings {
 	autoIndexOnStartup: boolean;
 	/** Epoch ms of the last completed full index, or null if never. */
 	lastIndexedAt: number | null;
+	/** True while a full run is in progress; cleared only on clean completion, so
+	 *  an explicit stop OR a crash/quit leaves it set — the Resume-prompt signal. */
+	indexInterrupted: boolean;
+	/** Best-effort notes-remaining snapshot at interruption, for messaging. */
+	indexRemaining: number | null;
 
 	// Storage — default outside the vault so Obsidian Sync never touches it.
 	dbPath: string;
@@ -44,6 +49,8 @@ export const DEFAULT_SETTINGS: UruSettings = {
 	includeFrontmatter: false,
 	autoIndexOnStartup: false,
 	lastIndexedAt: null,
+	indexInterrupted: false,
+	indexRemaining: null,
 	dbPath: "",
 };
 
@@ -126,6 +133,7 @@ export class UruSettingTab extends PluginSettingTab {
 		const countEl = meta.createSpan();
 		const currentEl = meta.createSpan({ cls: "uru-index-progress-current" });
 		const hintEl = progressEl.createDiv("uru-index-progress-hint");
+		const interruptedEl = containerEl.createDiv("uru-index-interrupted");
 
 		const apply = (status: IndexStatus | null) => {
 			const active = status !== null;
@@ -134,14 +142,28 @@ export class UruSettingTab extends PluginSettingTab {
 			stopBtn.buttonEl.toggle(active);
 			progressEl.toggle(active);
 			if (status) {
+				interruptedEl.toggle(false);
 				const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
 				fill.style.width = `${pct}%`;
+				const eta = etaSeconds(status);
+				const etaTxt = eta !== null ? ` · ${formatEta(eta)}` : "";
 				countEl.setText(
-					`${status.done.toLocaleString()} / ${status.total.toLocaleString()} notes · ${pct}%`,
+					`${status.done.toLocaleString()} / ${status.total.toLocaleString()} notes · ${pct}%${etaTxt}`,
 				);
 				currentEl.setText(status.current);
 				hintEl.setText(this.indexHint());
 			} else {
+				// Idle: drive the primary button + interrupted notice off the persisted
+				// flag, so both revert automatically after a clean resume completes.
+				const interrupted = this.plugin.settings.indexInterrupted;
+				indexBtn.setButtonText(interrupted ? "Resume indexing" : "Index new & changed");
+				indexBtn.setTooltip(
+					interrupted
+						? "Finish the notes left from the interrupted run"
+						: "Index notes added or edited since the last run",
+				);
+				interruptedEl.setText(interrupted ? this.interruptedText() : "");
+				interruptedEl.toggle(interrupted);
 				action.setDesc(this.indexSummary());
 			}
 		};
@@ -251,6 +273,13 @@ export class UruSettingTab extends PluginSettingTab {
 		if (count === 0 && !last) return "No notes indexed yet — run this to make your vault searchable.";
 		const notes = `${count.toLocaleString()} ${count === 1 ? "note" : "notes"} indexed`;
 		return last ? `${notes} · last updated ${new Date(last).toLocaleString()}.` : `${notes}.`;
+	}
+
+	/** Highlighted line shown when a prior run was stopped/crashed before finishing. */
+	private interruptedText(): string {
+		const n = this.plugin.settings.indexRemaining;
+		const left = n && n > 0 ? `about ${n.toLocaleString()} ${n === 1 ? "note" : "notes"} may remain` : "some notes may remain";
+		return `Indexing was interrupted — ${left}. Resume to finish.`;
 	}
 
 	/** Reassurance shown under the progress bar while indexing runs. */

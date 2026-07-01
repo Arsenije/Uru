@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { type App, type TAbstractFile, TFile, Notice } from "obsidian";
-import type { BatchDocument, SidecarClient } from "../sidecar/client";
+import type { BatchDocument, RememberResult, SidecarClient } from "../sidecar/client";
 import type { UruSettings } from "../settings";
 import { HashStore } from "./hashStore";
 
@@ -10,6 +10,35 @@ export interface IndexStatus {
 	done: number;
 	total: number;
 	current: string;
+	/** Epoch ms when this run's note loop began — lets consumers derive an ETA. */
+	startedAt: number;
+}
+
+/**
+ * Estimated seconds remaining, or null during warm-up (too few notes/too little
+ * elapsed for a stable figure). Uses a cumulative average (notes/sec since the
+ * run began): stateless — reads only the status — so both UIs stay pure. It lags
+ * a slow tail but never oscillates; if a snappier estimate is ever needed, add a
+ * `recentRate` field computed from a small ring buffer in fullIndex and prefer it.
+ */
+export function etaSeconds(s: IndexStatus): number | null {
+	const remaining = s.total - s.done;
+	if (remaining <= 0) return null;
+	const elapsed = (Date.now() - s.startedAt) / 1000;
+	if (s.done < 3 || elapsed < 4) return null;
+	const rate = s.done / elapsed; // notes/sec
+	if (rate <= 0) return null;
+	return remaining / rate;
+}
+
+/** Human-friendly ETA, e.g. "under a minute", "about 4 min left", "about 1 h 10 min left". */
+export function formatEta(seconds: number): string {
+	if (seconds < 45) return "under a minute";
+	const mins = Math.round(seconds / 60);
+	if (mins < 60) return `about ${mins} min left`;
+	const h = Math.floor(mins / 60);
+	const m = mins % 60;
+	return m ? `about ${h} h ${m} min left` : `about ${h} h left`;
 }
 
 /** Compile a single glob (`**`, `*`, `?`) to a RegExp anchored to the full path. */
@@ -166,15 +195,15 @@ export class Indexer {
 			let failed = 0;
 			let stopped = false;
 			const failures: string[] = [];
+			const startedAt = Date.now();
 			for (const { doc, forgetFirst } of docs) {
 				if (this.cancelRequested) {
 					stopped = true;
 					break;
 				}
-				this.onIndexStatus({ done, total: docs.length, current: doc.title ?? doc.external_id });
+				this.onIndexStatus({ done, total: docs.length, current: doc.title ?? doc.external_id, startedAt });
 				try {
-					if (forgetFirst) await client.forget(doc.external_id).catch(() => undefined);
-					const res = await client.remember(doc);
+					const res = await this.rememberWithRetry(client, doc, forgetFirst);
 					this.store.set(doc.external_id, {
 						hash: doc.metadata!.hash as string,
 						docId: res.document_id,
@@ -205,6 +234,54 @@ export class Indexer {
 			this.cancelRequested = false;
 			this.onIndexStatus(null);
 		}
+	}
+
+	/**
+	 * Send one note, retrying a couple of times to ride out a transient failure —
+	 * a sleep/wake boundary or a brief sidecar crash-restart. Before each retry we
+	 * wait (briefly) for the backend to report healthy, so we don't burn attempts
+	 * against a down port. `forget` runs only on the first try: khora dedups by
+	 * content checksum and skips COMPLETED docs, so a retried remember after a
+	 * partial success is a cheap no-op — re-forgetting could drop a fresh write.
+	 */
+	private async rememberWithRetry(
+		client: SidecarClient,
+		doc: BatchDocument,
+		forgetFirst: boolean,
+	): Promise<RememberResult> {
+		const backoff = [500, 1_500];
+		let forgotten = false;
+		let lastErr: unknown;
+		for (let attempt = 0; attempt <= backoff.length; attempt++) {
+			if (this.cancelRequested) throw new Error("cancelled");
+			try {
+				if (forgetFirst && !forgotten) {
+					await client.forget(doc.external_id).catch(() => undefined);
+					forgotten = true;
+				}
+				return await client.remember(doc);
+			} catch (e) {
+				lastErr = e;
+				if (attempt === backoff.length) break;
+				await this.sleep(backoff[attempt]);
+				await this.waitForHealth(client, 10_000);
+			}
+		}
+		throw lastErr;
+	}
+
+	/** Poll /health until "ok" or the budget elapses (absorbs a mid-restart backend). */
+	private async waitForHealth(client: SidecarClient, budgetMs: number): Promise<void> {
+		const deadline = Date.now() + budgetMs;
+		while (Date.now() < deadline && !this.cancelRequested) {
+			const h = await client.health().catch(() => null);
+			if (h?.status === "ok") return;
+			await this.sleep(500);
+		}
+	}
+
+	private sleep(ms: number): Promise<void> {
+		return new Promise((r) => setTimeout(r, ms));
 	}
 
 	// ---- incremental -----------------------------------------------------
