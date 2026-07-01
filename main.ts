@@ -244,17 +244,25 @@ export default class UruPlugin extends Plugin {
 		return this.indexer?.indexedCount() ?? 0;
 	}
 
-	/** Current index progress, or null when idle. */
-	currentIndexStatus(): IndexStatus | null {
-		return this.indexStatus;
+	/** True while a full index is running. */
+	isIndexing(): boolean {
+		return this.indexer?.isIndexing ?? false;
 	}
 
-	/** Subscribe to index-progress updates. Returns an unsubscribe function. */
-	onIndexStatusChange(cb: (s: IndexStatus | null) => void): () => void {
+	/** True once the backend is up and can accept indexing/chat calls. */
+	backendReady(): boolean {
+		return this.client() !== null && this.indexer !== null;
+	}
+
+	/**
+	 * Subscribe to index-status changes (used by views to mirror the status
+	 * bar's progress). The callback fires immediately with the current status,
+	 * then on every subsequent tick. Returns an unsubscribe fn.
+	 */
+	onIndexStatus(cb: (s: IndexStatus | null) => void): () => void {
 		this.indexStatusListeners.add(cb);
-		return () => {
-			this.indexStatusListeners.delete(cb);
-		};
+		cb(this.indexStatus);
+		return () => this.indexStatusListeners.delete(cb);
 	}
 
 	/** Ask the running full index to stop after the current note. */

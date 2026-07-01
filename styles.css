@@ -152,23 +152,79 @@
 	resize: vertical;
 }
 
-/* Uru settings — indexing progress */
+/* Uru chat — first-run empty state */
+.uru-empty {
+	margin: auto;
+	max-width: 22rem;
+	text-align: center;
+	display: flex;
+	flex-direction: column;
+	gap: 0.6rem;
+	padding: 1.5rem 1rem;
+}
+.uru-empty-title {
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+.uru-empty-copy {
+	margin: 0;
+	font-size: var(--font-ui-small);
+	line-height: 1.5;
+	color: var(--text-muted);
+}
+.uru-empty-action {
+	margin-top: 0.4rem;
+}
+.uru-empty-btn {
+	cursor: pointer;
+}
 .uru-progress {
-	margin: 0.2rem 0 1rem;
+	display: flex;
+	flex-direction: column;
+	gap: 0.35rem;
 }
 .uru-progress-track {
 	height: 6px;
-	border-radius: 3px;
+	border-radius: var(--radius-s);
 	background: var(--background-modifier-border);
 	overflow: hidden;
 }
 .uru-progress-fill {
 	height: 100%;
+	width: 0;
+	background: var(--interactive-accent);
+	transition: width 0.2s ease;
+}
+.uru-progress-track.is-indeterminate .uru-progress-fill {
+	width: 40%;
+	animation: uru-indeterminate 1.1s ease-in-out infinite;
+}
+@keyframes uru-indeterminate {
+	0% { margin-left: -40%; }
+	100% { margin-left: 100%; }
+}
+.uru-progress-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+/* Uru settings — indexing progress */
+.uru-index-progress {
+	margin: 0.2rem 0 1rem;
+}
+.uru-index-progress-track {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+.uru-index-progress-fill {
+	height: 100%;
 	width: 0%;
 	background: var(--interactive-accent);
 	transition: width 0.2s ease;
 }
-.uru-progress-meta {
+.uru-index-progress-meta {
 	display: flex;
 	justify-content: space-between;
 	gap: 0.75rem;
@@ -176,13 +232,13 @@
 	font-size: var(--font-ui-smaller);
 	color: var(--text-muted);
 }
-.uru-progress-current {
+.uru-index-progress-current {
 	min-width: 0;
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
 }
-.uru-progress-hint {
+.uru-index-progress-hint {
 	margin-top: 0.4rem;
 	font-size: var(--font-ui-smaller);
 	color: var(--text-faint);

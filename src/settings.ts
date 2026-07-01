@@ -171,12 +171,14 @@ export class UruSettingTab extends PluginSettingTab {
 					});
 			});
 
-		const progressEl = containerEl.createDiv("uru-progress");
-		const fill = progressEl.createDiv("uru-progress-track").createDiv("uru-progress-fill");
-		const meta = progressEl.createDiv("uru-progress-meta");
+		const progressEl = containerEl.createDiv("uru-index-progress");
+		const fill = progressEl
+			.createDiv("uru-index-progress-track")
+			.createDiv("uru-index-progress-fill");
+		const meta = progressEl.createDiv("uru-index-progress-meta");
 		const countEl = meta.createSpan();
-		const currentEl = meta.createSpan({ cls: "uru-progress-current" });
-		const hintEl = progressEl.createDiv("uru-progress-hint");
+		const currentEl = meta.createSpan({ cls: "uru-index-progress-current" });
+		const hintEl = progressEl.createDiv("uru-index-progress-hint");
 
 		const apply = (status: IndexStatus | null) => {
 			const active = status !== null;
@@ -196,8 +198,8 @@ export class UruSettingTab extends PluginSettingTab {
 				action.setDesc(this.indexSummary());
 			}
 		};
-		apply(this.plugin.currentIndexStatus());
-		this.unsubscribe = this.plugin.onIndexStatusChange(apply);
+		// onIndexStatus fires immediately with the current status, then on each tick.
+		this.unsubscribe = this.plugin.onIndexStatus(apply);
 
 		// ---- Models ---------------------------------------------------------
 		new Setting(containerEl).setName("Models").setHeading();

@@ -22,24 +22,25 @@ export class SetupModal extends Modal {
 		contentEl.createEl("h2", { text: "Set up Uru" });
 		contentEl.createEl("p", {
 			text:
-				"Uru runs a fully local AI backend on your machine — no cloud, no API keys. " +
-				"The first run downloads ~3 GB (a chat model, an embedding model, and the " +
-				"llama.cpp runtime) and sets up a private Python environment. Everything " +
-				"stays on your computer.",
+				"Uru adds AI-powered search to your vault, and everything runs on your own " +
+				"computer — nothing goes to the cloud, and there's no account or API key to set up. " +
+				"The first time, Uru downloads about 3 GB (the AI models it needs) and installs a " +
+				"few components. This happens once. Your notes never leave your machine.",
 		});
 
 		let fullKg = this.plugin.settings.extractEntities;
 		new Setting(contentEl)
-			.setName("Indexing mode")
+			.setName("How much to analyze")
 			.setDesc(
-				"Lite = fast semantic search (embeddings only). " +
-					"Full = also builds a knowledge graph (entities & relationships) — richer, " +
-					"but ~5–30s per note on a local model. You can change this later.",
+				'"Quick" finds notes by meaning, not just keywords — fast to set up. ' +
+					'"Deep" does that too, and also maps the people, places, and ideas mentioned ' +
+					"across your notes and how they connect. More powerful, but slower to build " +
+					"(~5–30 seconds per note the first time). You can switch anytime.",
 			)
 			.addDropdown((d) =>
 				d
-					.addOption("lite", "Lite — fast semantic search")
-					.addOption("full", "Full — knowledge graph (slower)")
+					.addOption("lite", "Quick — search by meaning")
+					.addOption("full", "Deep — search + connections (slower)")
 					.setValue(fullKg ? "full" : "lite")
 					.onChange((v) => (fullKg = v === "full")),
 			);
