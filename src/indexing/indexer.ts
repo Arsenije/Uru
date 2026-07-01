@@ -142,7 +142,7 @@ export class Indexer {
 	async fullIndex(force = false): Promise<boolean> {
 		const client = this.client();
 		if (!client) {
-			new Notice("Uru backend not ready");
+			new Notice("Uru isn't ready yet — one moment…");
 			return false;
 		}
 		if (this.indexing) {

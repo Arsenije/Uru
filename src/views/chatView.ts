@@ -280,7 +280,7 @@ export class ChatView extends ItemView {
 		if (!query || this.busy || this.input.disabled) return;
 		const client = this.plugin.client();
 		if (!client) {
-			new Notice("Uru backend not ready");
+			new Notice("Uru isn't ready yet — one moment…");
 			return;
 		}
 

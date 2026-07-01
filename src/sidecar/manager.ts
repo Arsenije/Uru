@@ -202,7 +202,7 @@ export class SidecarManager {
 				return h;
 			}
 			if (h?.status === "error") {
-				throw new Error(`backend failed to start: ${h.error ?? "unknown"}`);
+				throw new Error(`the local AI service failed to start: ${h.error ?? "unknown"}`);
 			}
 			await sleep(400);
 		}
