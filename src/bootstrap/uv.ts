@@ -28,6 +28,10 @@ const LLAMA_BUILD = "b9838";
 // fast-path verifies the repo-local venv matches this before reusing it, so a
 // stale editable checkout can't silently stand in for the shipped version.
 const KHORA_VERSION = "0.21.0";
+// Bumped whenever the bundled `uru_sidecar` Python changes. The app-data venv is
+// reinstalled when the installed copy differs, so pure-Python sidecar fixes reach
+// existing users (khora alone wouldn't trigger it — its pin rarely moves).
+const SIDECAR_VERSION = "0.2.0";
 
 // Models. The embedding model fixes the vector dimension.
 const CHAT_REPO = "bartowski/Qwen2.5-3B-Instruct-GGUF";
@@ -85,17 +89,21 @@ function capture(cmd: string, args: string[]): Promise<{ code: number; out: stri
  * the installed khora version. Returns null if the interpreter is missing or any
  * import fails — i.e. a partial/failed install that needs repair.
  */
-async function probeKhoraVersion(py: string): Promise<string | null> {
+async function probeVersions(py: string): Promise<{ khora: string; sidecar: string } | null> {
 	if (!existsSync(py)) return null;
-	// Sentinel-prefix the version so we can pluck it out regardless of any
+	// Sentinel-prefix the versions so we can pluck them out regardless of any
 	// import-time log noise khora writes to stdout/stderr.
 	const { code, out } = await capture(py, [
 		"-c",
-		"import uru_sidecar, huggingface_hub, khora; print('KHORA_PROBE=' + khora.__version__)",
+		"import uru_sidecar, huggingface_hub, khora; " +
+			"print('KHORA_PROBE=' + khora.__version__); " +
+			"print('SIDECAR_PROBE=' + uru_sidecar.__version__)",
 	]);
 	if (code !== 0) return null;
-	const m = out.match(/KHORA_PROBE=(\S+)/);
-	return m ? m[1] : null;
+	const kh = out.match(/KHORA_PROBE=(\S+)/);
+	const sc = out.match(/SIDECAR_PROBE=(\S+)/);
+	if (!kh || !sc) return null;
+	return { khora: kh[1], sidecar: sc[1] };
 }
 
 async function download(url: string, dest: string): Promise<void> {
@@ -238,14 +246,14 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 	const devModels = findModels(join(pluginSidecarDir, ".models"));
 	const devLlama = findFile(join(pluginSidecarDir, ".llamacpp-test"), "llama-server");
 	if (existsSync(devPy) && devModels && devLlama) {
-		const devVersion = await probeKhoraVersion(devPy);
-		if (devVersion === KHORA_VERSION) {
+		const dev = await probeVersions(devPy);
+		if (dev && dev.khora === KHORA_VERSION && dev.sidecar === SIDECAR_VERSION) {
 			log("Using repo-local dev backend.");
 			return { pythonPath: devPy, sidecarCwd: pluginSidecarDir, llamaServerBin: devLlama, ...devModels };
 		}
 		log(
-			`Repo-local dev backend skipped (khora ${devVersion ?? "missing"} != pinned ${KHORA_VERSION}); ` +
-				"bootstrapping app-data backend.",
+			`Repo-local dev backend skipped (khora ${dev?.khora ?? "missing"}/sidecar ${dev?.sidecar ?? "missing"} ` +
+				`!= pinned ${KHORA_VERSION}/${SIDECAR_VERSION}); bootstrapping app-data backend.`,
 		);
 	}
 
@@ -260,14 +268,25 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 		log("Creating virtual environment…");
 		await run(uv, ["venv", "--python", "3.13", venvDir], { env }, log);
 	}
-	// Verify the deps are actually importable — don't gate on the interpreter
-	// existing. If a previous run created the venv but died before/at pip
-	// install, the binary exists yet the packages don't; reinstall to repair
-	// instead of skipping and shipping a broken backend on every retry.
-	if ((await probeKhoraVersion(py)) === null) {
-		log("Installing khora + sidecar…");
-		await run(uv, ["pip", "install", "--python", py, pluginSidecarDir], { env }, log);
-		if ((await probeKhoraVersion(py)) === null) {
+	// Verify the deps are actually importable AND up to date — don't gate on the
+	// interpreter existing. Reinstall when: (a) a probe fails (partial/broken
+	// install — the venv exists but packages don't), or (b) the installed khora
+	// or sidecar version differs from what this plugin build ships, so a
+	// pure-Python sidecar fix reaches an already-bootstrapped user.
+	const installed = await probeVersions(py);
+	const stale =
+		installed === null ||
+		installed.khora !== KHORA_VERSION ||
+		installed.sidecar !== SIDECAR_VERSION;
+	if (stale) {
+		log(
+			installed === null
+				? "Installing khora + sidecar…"
+				: `Updating backend (khora ${installed.khora}→${KHORA_VERSION}, ` +
+						`sidecar ${installed.sidecar}→${SIDECAR_VERSION})…`,
+		);
+		await run(uv, ["pip", "install", "--python", py, "--force-reinstall", pluginSidecarDir], { env }, log);
+		if ((await probeVersions(py)) === null) {
 			throw new Error(
 				"backend dependencies missing after install — `import uru_sidecar/khora/huggingface_hub` failed; check diagnostics.",
 			);

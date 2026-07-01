@@ -28,6 +28,7 @@ export default class UruPlugin extends Plugin {
 	private status: HealthResponse["status"] | "uninstalled" = "uninstalled";
 	private statusDetail = "";
 	private indexStatus: IndexStatus | null = null;
+	private lastIndexRun: IndexStatus | null = null;
 	private indexStatusListeners = new Set<(s: IndexStatus | null) => void>();
 	private statusBar!: HTMLElement;
 	private eventOffs: Array<() => void> = [];
@@ -62,6 +63,15 @@ export default class UruPlugin extends Plugin {
 			id: "uru-force-reindex",
 			name: "Force re-index (all notes)",
 			callback: () => void this.reindex(true),
+		});
+		this.addCommand({
+			id: "uru-resume-indexing",
+			name: "Resume indexing",
+			checkCallback: (checking) => {
+				const canResume = this.settings.indexInterrupted && !this.isIndexing();
+				if (canResume && !checking) void this.reindex(false);
+				return canResume;
+			},
 		});
 		this.addCommand({
 			id: "uru-stop-indexing",
@@ -222,7 +232,12 @@ export default class UruPlugin extends Plugin {
 		);
 		await this.indexer.load();
 		this.indexer.registerVaultEvents((off) => this.eventOffs.push(off));
-		if (this.settings.autoIndexOnStartup) void this.reindex(false);
+		if (this.settings.autoIndexOnStartup) {
+			void this.reindex(false); // auto-index resumes and clears the flag itself
+		} else if (this.settings.indexInterrupted) {
+			// Nudge only — never auto-run. Resume via the button, command, or chat.
+			new Notice('Uru: indexing didn\'t finish. Run "Resume indexing" to continue.', 8000);
+		}
 	}
 
 	// ---- public API used by settings / views ----------------------------
@@ -296,15 +311,36 @@ export default class UruPlugin extends Plugin {
 			new Notice("Uru backend not ready");
 			return;
 		}
+		// A run already owns the interrupted flag and the progress UI — don't let a
+		// concurrent call (e.g. auto-index-on-startup + a manual click) stamp state
+		// or fire an idle tick that would hide the live progress.
+		if (this.isIndexing()) {
+			new Notice("Uru is already indexing");
+			return;
+		}
 		this.indexer.recompileIgnore();
+		// Mark a run as in-flight BEFORE it starts and persist, so a crash/quit
+		// mid-run leaves the flag set → the Resume prompt appears next time.
+		this.lastIndexRun = null;
+		this.settings.indexInterrupted = true;
+		this.settings.indexRemaining = null;
+		await this.saveSettings();
 		const completed = await this.indexer.fullIndex(force);
 		if (completed) {
 			this.settings.lastIndexedAt = Date.now();
-			await this.saveSettings();
-			// Re-notify (still idle) so subscribed UI refreshes its summary with the
-			// newly-saved timestamp — fullIndex fired its null tick before we saved.
-			this.setIndexStatus(null);
+			this.settings.indexInterrupted = false;
+			this.settings.indexRemaining = null;
+		} else {
+			// Stopped or errored — leave the flag set and snapshot what's left.
+			// (Read via a method: setIndexStatus mutates lastIndexRun through the
+			// status callback during the await, which TS's flow analysis can't see.)
+			const r = this.lastRun();
+			this.settings.indexRemaining = r ? Math.max(0, r.total - r.done) : null;
 		}
+		await this.saveSettings();
+		// Re-notify (still idle) so subscribed UI refreshes its summary/labels with
+		// the newly-saved state — fullIndex fired its null tick before we saved.
+		this.setIndexStatus(null);
 	}
 
 	/**
@@ -353,8 +389,14 @@ export default class UruPlugin extends Plugin {
 		this.renderStatusBar();
 	}
 
+	/** Last live status tick of the current/most-recent run (opaque to flow analysis). */
+	private lastRun(): IndexStatus | null {
+		return this.lastIndexRun;
+	}
+
 	private setIndexStatus(s: IndexStatus | null): void {
 		this.indexStatus = s;
+		if (s) this.lastIndexRun = s; // remember the last live tick for a remaining-count on interruption
 		this.renderStatusBar();
 		for (const cb of this.indexStatusListeners) cb(s);
 	}

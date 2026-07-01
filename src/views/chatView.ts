@@ -1,7 +1,7 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
 import type UruPlugin from "../../main";
 import type { ChatCitation, ChatMessage, NoteContext } from "../sidecar/client";
-import type { IndexStatus } from "../indexing/indexer";
+import { etaSeconds, formatEta, type IndexStatus } from "../indexing/indexer";
 
 export const URU_CHAT_VIEW = "uru-chat-view";
 
@@ -131,32 +131,43 @@ export class ChatView extends ItemView {
 		this.setComposerEnabled(false);
 		this.messagesEl.empty();
 		this.progressFill = this.progressLabel = null;
+		// A prior run stopped/crashed before the first note completed (count still 0).
+		// Resume must NOT re-prompt for mode or restart the backend.
+		const interrupted =
+			status === null && !this.plugin.isIndexing() && this.plugin.settings.indexInterrupted;
 		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
 		this.emptyEl = box;
 		box.createEl("div", { cls: "uru-empty-title", text: "Chat with your vault" });
 		box.createEl("p", {
 			cls: "uru-empty-copy",
-			text:
-				"Uru reads your notes before it can answer. Indexing runs once, on your " +
-				"machine — a few minutes for a large vault. You can keep working while it runs.",
+			text: interrupted
+				? "Indexing didn't finish last time. Resume to pick up where it left off — " +
+					"you can keep working while it runs."
+				: "Uru reads your notes before it can answer. Indexing runs once, on your " +
+					"machine — a few minutes for a large vault. You can keep working while it runs.",
 		});
 		const action = box.createDiv({ cls: "uru-empty-action" });
 		if (status !== null || this.plugin.isIndexing()) {
 			this.renderProgress(action, status);
 		} else {
-			this.renderModeChoice(action);
-			const btn = action.createEl("button", { cls: "mod-cta uru-empty-btn", text: "Index my vault" });
+			if (!interrupted) this.renderModeChoice(action);
+			const btn = action.createEl("button", {
+				cls: "mod-cta uru-empty-btn",
+				text: interrupted ? "Resume indexing" : "Index my vault",
+			});
 			btn.addEventListener("click", async () => {
 				if (!this.plugin.backendReady()) {
 					new Notice("Uru is still starting — one moment…");
 					return;
 				}
-				const deep = this.chosenDeep ?? this.plugin.settings.extractEntities;
 				this.renderProgress(action, null); // button → bar immediately
 				try {
-					// Apply the pick first (restarts the backend only if it differs),
-					// so the very first index runs in the chosen mode.
-					await this.plugin.applyIndexingMode(deep);
+					if (!interrupted) {
+						// Fresh run: apply the Deep/Quick pick first (restarts the backend
+						// only if it differs) so the first index runs in the chosen mode.
+						const deep = this.chosenDeep ?? this.plugin.settings.extractEntities;
+						await this.plugin.applyIndexingMode(deep);
+					}
 					void this.plugin.reindex(false);
 				} catch (e) {
 					new Notice(`Uru: ${(e as Error).message}`);
@@ -232,7 +243,9 @@ export class ChatView extends ItemView {
 		this.progressFill.parentElement?.removeClass("is-indeterminate");
 		const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
 		this.progressFill.style.width = `${pct}%`;
-		this.progressLabel.setText(`Indexing ${status.done}/${status.total}…`);
+		const eta = etaSeconds(status);
+		const suffix = eta !== null ? ` · ${formatEta(eta)}` : "…";
+		this.progressLabel.setText(`Indexing ${status.done}/${status.total}${suffix}`);
 	}
 
 	private reset(): void {

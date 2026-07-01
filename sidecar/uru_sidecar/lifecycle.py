@@ -26,6 +26,7 @@ class SidecarRuntime:
         self.error: str | None = None
         self.namespace_id: str | None = None
         self.last_activity = time.monotonic()
+        self._inflight = 0
         self._kb: Any = None
         self._chat: LlamaServer | None = None
         self._embed: LlamaServer | None = None
@@ -130,6 +131,17 @@ class SidecarRuntime:
 
     def idle_seconds(self) -> float:
         return time.monotonic() - self.last_activity
+
+    def begin_request(self) -> None:
+        """Mark a request in flight so the idle watchdog won't shut down mid-work
+        (e.g. a Deep-mode note whose extraction runs longer than idle_timeout)."""
+        self._inflight += 1
+
+    def end_request(self) -> None:
+        self._inflight = max(0, self._inflight - 1)
+
+    def has_inflight(self) -> bool:
+        return self._inflight > 0
 
     # ---- operations ------------------------------------------------------
 

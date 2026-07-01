@@ -38,7 +38,17 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
     @app.middleware("http")
     async def _track_activity(request, call_next):
         runtime.touch()  # any request resets the idle watchdog
-        return await call_next(request)
+        # /health fires every ~15s from the plugin heartbeat; counting it would
+        # pin inflight>0 forever and defeat genuine idle shutdown. Real work
+        # (remember/recall/chat) is guarded so a long note can't be killed mid-flight.
+        if request.url.path == "/health":
+            return await call_next(request)
+        runtime.begin_request()
+        try:
+            return await call_next(request)
+        finally:
+            runtime.touch()  # reset idle at request END too, so long calls don't leave it stale
+            runtime.end_request()
 
     def require_auth(authorization: str = Header(default="")) -> None:
         if not token:  # no token configured -> open (dev only)
