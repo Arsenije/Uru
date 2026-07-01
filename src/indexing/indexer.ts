@@ -212,33 +212,75 @@ export class Indexer {
 				return { total: 0, succeeded: 0, failed: 0, stopped: false };
 			}
 
-			// Index per note via requestUrl (the proven path) — reliable in the
-			// Obsidian renderer; progress shown in the status bar only.
 			const failures: string[] = [];
 			const startedAt = Date.now();
-			for (const { doc, forgetFirst } of docs) {
-				if (this.cancelRequested) {
-					stopped = true;
-					break;
+			if (this.settings.batchIndexing) {
+				// EXPERIMENTAL bounded-batch path: stream the whole change-set through
+				// the sidecar's /index/full, which caps per-note extraction output and
+				// prunes co-occurrence noise. We record ONLY notes the sidecar confirms
+				// committed, so the honest index-state contract is preserved.
+				for (const { doc, forgetFirst } of docs) {
+					if (forgetFirst) await client.forget(doc.external_id).catch(() => undefined);
 				}
-				const done = succeeded + failed;
-				this.onIndexStatus({ done, total, current: doc.title ?? doc.external_id, startedAt });
+				const committed = new Map<string, string>();
 				try {
-					const res = await this.rememberWithRetry(client, doc, forgetFirst);
-					// Only now — after a durable success — is the note recorded. A note
-					// the backend timed out on stays unrecorded, so the next run retries it.
-					this.store.set(doc.external_id, {
-						hash: doc.metadata!.hash as string,
-						docId: res.document_id,
-						lastIndexed: Date.now(),
-						extractEntities: mode,
-					});
-					succeeded++;
+					for await (const ev of client.indexFull(docs.map((d) => d.doc))) {
+						if (this.cancelRequested) {
+							stopped = true;
+							break;
+						}
+						if (ev.event === "progress") {
+							this.onIndexStatus({ done: ev.completed, total, current: `${ev.completed}/${ev.total}`, startedAt });
+						} else if (ev.event === "committed") {
+							if (ev.ok) committed.set(ev.external_id, ev.document_id ?? "");
+						} else if (ev.event === "error") {
+							throw new Error(ev.message);
+						}
+					}
 				} catch (e) {
-					failed++;
-					failures.push(`${doc.external_id}: ${(e as Error).message}`);
+					failures.push(`batch: ${(e as Error).message}`);
 				}
-				if ((succeeded + failed) % 10 === 0) await this.store.save();
+				for (const { doc } of docs) {
+					if (committed.has(doc.external_id)) {
+						this.store.set(doc.external_id, {
+							hash: doc.metadata!.hash as string,
+							docId: committed.get(doc.external_id) || "",
+							lastIndexed: Date.now(),
+							extractEntities: mode,
+						});
+						succeeded++;
+					}
+				}
+				// A completed (or errored) batch: uncommitted notes are failures for this
+				// run → retried next time. A user stop leaves the remainder unknown.
+				if (!stopped) failed = total - succeeded;
+			} else {
+				// Index per note via requestUrl (the proven path) — reliable in the
+				// Obsidian renderer; progress shown in the status bar only.
+				for (const { doc, forgetFirst } of docs) {
+					if (this.cancelRequested) {
+						stopped = true;
+						break;
+					}
+					const done = succeeded + failed;
+					this.onIndexStatus({ done, total, current: doc.title ?? doc.external_id, startedAt });
+					try {
+						const res = await this.rememberWithRetry(client, doc, forgetFirst);
+						// Only now — after a durable success — is the note recorded. A note
+						// the backend timed out on stays unrecorded, so the next run retries it.
+						this.store.set(doc.external_id, {
+							hash: doc.metadata!.hash as string,
+							docId: res.document_id,
+							lastIndexed: Date.now(),
+							extractEntities: mode,
+						});
+						succeeded++;
+					} catch (e) {
+						failed++;
+						failures.push(`${doc.external_id}: ${(e as Error).message}`);
+					}
+					if ((succeeded + failed) % 10 === 0) await this.store.save();
+				}
 			}
 			if (failures.length) console.warn("[Uru] notes that failed to index:\n" + failures.join("\n"));
 			await this.store.save();

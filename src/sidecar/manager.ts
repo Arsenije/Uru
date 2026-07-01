@@ -16,6 +16,9 @@ export interface SidecarLaunchSpec {
 	embeddingDimension: number;
 	namespaceId: string | null;
 	extractEntities: boolean;
+	/** Experimental: launch the sidecar with bounded batch extraction (caps
+	 *  per-note LLM output + prunes co-occurrence noise). Off = today's behaviour. */
+	boundedExtraction: boolean;
 	/** Path for the single-instance lockfile. */
 	lockPath: string;
 }
@@ -89,6 +92,7 @@ export class SidecarManager {
 		];
 		if (this.spec.namespaceId) args.push("--namespace-id", this.spec.namespaceId);
 		if (!this.spec.extractEntities) args.push("--no-extract-entities");
+		if (this.spec.boundedExtraction) args.push("--bounded-extraction");
 
 		this.emit("starting", "launching backend");
 		// detached: the sidecar leads its own process group, so killing -pid takes

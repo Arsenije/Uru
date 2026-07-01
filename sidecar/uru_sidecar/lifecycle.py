@@ -213,13 +213,76 @@ class SidecarRuntime:
     async def remember_batch(self, documents: list[dict], *,
                              on_progress: Callable[[int, int], None] | None = None) -> Any:
         cfg = self.config
-        return await self._kb.remember_batch(
-            documents,
+        kwargs: dict[str, Any] = dict(
             namespace=self.namespace_id,
             entity_types=cfg.entity_types,
             relationship_types=cfg.relationship_types,
             on_progress=on_progress,
         )
+        if cfg.bounded_extraction:
+            # Cap per-note LLM output length (the runaway generations), shrink the
+            # extraction batch, serialize (llama serves one at a time anyway), and
+            # skip the extra relationship-inference pass. The lightweight
+            # co-occurrence noise is handled separately by prune_lightweight_edges().
+            kwargs.update(
+                extraction_max_tokens=cfg.extraction_max_tokens,
+                extraction_batch_size=cfg.extraction_batch_size,
+                max_concurrent=1,
+                infer_relationships=False,
+            )
+        return await self._kb.remember_batch(documents, **kwargs)
+
+    async def committed_document_ids(self, external_ids: list[str]) -> dict[str, str | None]:
+        """For each requested external_id, its khora document_id if the note is now
+        present in the namespace, else None. Lets the caller record only
+        durably-committed notes (preserving the honest index-state contract) even
+        though remember_batch returns only aggregate counts."""
+        wanted = set(external_ids)
+        found: dict[str, str] = {}
+        try:
+            docs = await self._kb.list_documents(namespace=self.namespace_id, limit=1_000_000)
+            for d in docs:
+                ext = getattr(d, "external_id", None)
+                if ext not in wanted or ext in found:
+                    continue
+                # Only count a note as committed if its document actually reached
+                # COMPLETED — a present-but-failed doc must NOT be recorded as indexed.
+                st = getattr(d, "status", None)
+                st_val = getattr(st, "value", st)
+                if st is not None and st_val != "completed":
+                    continue
+                found[ext] = str(getattr(d, "id", "") or "")
+        except Exception:  # noqa: BLE001 — best-effort; unresolved ids report as not-committed
+            log.exception("committed_document_ids lookup failed")
+        return {ext: found.get(ext) for ext in external_ids}
+
+    def prune_lightweight_edges(self) -> int:
+        """Delete the low-value lightweight ``CO_OCCURS_WITH`` edges khora emits for
+        non-LLM chunks — an O(n²) fan-out over generic CONCEPT tokens ("the",
+        "july", …) that dominates the graph and adds no recall value. Best-effort
+        and synchronous (call via a thread); a failure here must never fail
+        indexing. Returns the number of rows deleted."""
+        import sqlite3
+
+        try:
+            conn = sqlite3.connect(str(self.config.db_path), timeout=5.0)
+            try:
+                conn.execute("PRAGMA busy_timeout=5000")
+                cur = conn.execute(
+                    "DELETE FROM relationships "
+                    "WHERE relationship_type = 'CO_OCCURS_WITH' "
+                    "AND json_extract(properties, '$.extraction_method') = 'lightweight'"
+                )
+                deleted = cur.rowcount
+                conn.commit()
+                if deleted:
+                    log.info("pruned %d lightweight co-occurrence edges", deleted)
+                return deleted
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — non-fatal graph cleanup
+            log.exception("lightweight-edge prune failed (non-fatal)")
+            return 0
 
     # ---- chat (RAG) ------------------------------------------------------
 

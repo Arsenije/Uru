@@ -209,6 +209,7 @@ export default class UruPlugin extends Plugin {
 			embeddingDimension: b.embeddingDimension,
 			namespaceId: this.settings.namespaceId,
 			extractEntities: this.settings.extractEntities,
+			boundedExtraction: this.settings.batchIndexing,
 			lockPath: join(vaultDir, "uru-sidecar.lock"),
 		});
 		this.manager.onStatus((s, d) => this.setStatus(s, d));
