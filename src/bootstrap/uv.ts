@@ -279,7 +279,7 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 	const modelsDir = join(runtimeDir, "models");
 	let models = findModels(modelsDir);
 	if (!models) {
-		log("Downloading models (~3 GB, first run only)…");
+		log("Downloading models (~3 GB, one time only)…");
 		await run(
 			py,
 			[
