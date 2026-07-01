@@ -66,12 +66,12 @@ export class UruSettingTab extends PluginSettingTab {
 		containerEl.empty();
 		const s = this.plugin.settings;
 
-		// ---- Backend --------------------------------------------------------
-		new Setting(containerEl).setName("Backend").setHeading();
+		// ---- Status ---------------------------------------------------------
+		new Setting(containerEl).setName("Status").setHeading();
 
 		new Setting(containerEl)
-			.setName("Status")
-			.setDesc(this.plugin.statusText())
+			.setName("Uru")
+			.setDesc(this.statusLabel())
 			.addButton((b) =>
 				b.setButtonText("Re-run setup").onClick(async () => {
 					await this.plugin.runSetup();
@@ -85,61 +85,8 @@ export class UruSettingTab extends PluginSettingTab {
 				}),
 			);
 
-		// ---- Indexing options ----------------------------------------------
+		// ---- Indexing (action first, then options) -------------------------
 		new Setting(containerEl).setName("Indexing").setHeading();
-
-		new Setting(containerEl)
-			.setName("Extract knowledge graph")
-			.setDesc(
-				"Full mode reads every note with a local model to pull out entities and how " +
-					"they relate — richer recall and chat, but slower to index. Turn it off for " +
-					"embeddings-only semantic search: much faster and lighter, with no entity graph.",
-			)
-			.addToggle((t) =>
-				t.setValue(s.extractEntities).onChange(async (v) => {
-					s.extractEntities = v;
-					await this.plugin.saveSettings();
-					new Notice(
-						"Uru: indexing mode changed. Restart the backend, then run a full " +
-							"re-index to apply it to existing notes.",
-						6000,
-					);
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Index on startup")
-			.setDesc("Scan the vault for new and changed notes automatically each time Obsidian loads.")
-			.addToggle((t) =>
-				t.setValue(s.autoIndexOnStartup).onChange(async (v) => {
-					s.autoIndexOnStartup = v;
-					await this.plugin.saveSettings();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Include frontmatter")
-			.setDesc("Index the YAML frontmatter at the top of each note, not just the body text.")
-			.addToggle((t) =>
-				t.setValue(s.includeFrontmatter).onChange(async (v) => {
-					s.includeFrontmatter = v;
-					await this.plugin.saveSettings();
-				}),
-			);
-
-		new Setting(containerEl)
-			.setName("Ignore patterns")
-			.setDesc("Glob patterns for files and folders to skip — one per line.")
-			.addTextArea((t) => {
-				t.setValue(s.ignoreGlobs.join("\n")).onChange(async (v) => {
-					s.ignoreGlobs = v.split("\n").map((x) => x.trim()).filter(Boolean);
-					await this.plugin.saveSettings();
-				});
-				t.inputEl.rows = 4;
-			});
-
-		// ---- Index your vault (action + live progress) ---------------------
-		new Setting(containerEl).setName("Index your vault").setHeading();
 
 		let indexBtn!: ButtonComponent;
 		let forceBtn!: ButtonComponent;
@@ -201,17 +148,72 @@ export class UruSettingTab extends PluginSettingTab {
 		// onIndexStatus fires immediately with the current status, then on each tick.
 		this.unsubscribe = this.plugin.onIndexStatus(apply);
 
-		// ---- Models ---------------------------------------------------------
-		new Setting(containerEl).setName("Models").setHeading();
 		new Setting(containerEl)
-			.setName("Chat / extraction model")
-			.setDesc(s.chatModelPath || "(set during setup)")
+			.setName("Deep indexing")
+			.setDesc(
+				"On: Uru also maps the people, places, and ideas across your notes and how they " +
+					"connect — richer search and chat, but slower to index (a few seconds per note). " +
+					'Off: fast search by meaning only. This is the "Deep" vs "Quick" choice from setup.',
+			)
+			.addToggle((t) =>
+				t.setValue(s.extractEntities).onChange(async (v) => {
+					s.extractEntities = v;
+					await this.plugin.saveSettings();
+					new Notice(
+						'Uru: indexing depth changed. Restart Uru, then choose "Re-index ' +
+							'everything" to apply it to notes you\'ve already indexed.',
+						6000,
+					);
+				}),
+			);
+
+		// ---- Advanced (collapsed) ------------------------------------------
+		const advanced = containerEl.createEl("details", { cls: "uru-advanced" });
+		advanced.createEl("summary", { text: "Advanced" });
+
+		new Setting(advanced)
+			.setName("Index on startup")
+			.setDesc("Check for new and changed notes automatically each time Obsidian starts.")
+			.addToggle((t) =>
+				t.setValue(s.autoIndexOnStartup).onChange(async (v) => {
+					s.autoIndexOnStartup = v;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(advanced)
+			.setName("Include frontmatter")
+			.setDesc("Also index the YAML frontmatter at the top of each note, not just the body.")
+			.addToggle((t) =>
+				t.setValue(s.includeFrontmatter).onChange(async (v) => {
+					s.includeFrontmatter = v;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(advanced)
+			.setName("Ignore patterns")
+			.setDesc("Glob patterns for files and folders to skip — one per line.")
+			.addTextArea((t) => {
+				t.setValue(s.ignoreGlobs.join("\n")).onChange(async (v) => {
+					s.ignoreGlobs = v.split("\n").map((x) => x.trim()).filter(Boolean);
+					await this.plugin.saveSettings();
+				});
+				t.inputEl.rows = 4;
+			});
+
+		// ---- Models (collapsed) --------------------------------------------
+		const models = containerEl.createEl("details", { cls: "uru-advanced" });
+		models.createEl("summary", { text: "Models" });
+		new Setting(models)
+			.setName("Chat model")
+			.setDesc(this.modelName(s.chatModelPath))
 			.setDisabled(true);
-		new Setting(containerEl)
+		new Setting(models)
 			.setName("Embedding model")
 			.setDesc(
-				`${s.embedModelPath || "(set during setup)"} — ${s.embeddingDimension} dimensions. ` +
-					"Changing this requires a full re-index.",
+				`${this.modelName(s.embedModelPath)} · ${s.embeddingDimension} dimensions. ` +
+					"Changing this needs a full re-index.",
 			)
 			.setDisabled(true);
 	}
@@ -221,11 +223,32 @@ export class UruSettingTab extends PluginSettingTab {
 		this.unsubscribe = null;
 	}
 
+	/** Plain-language backend status — no raw namespace UUID (kept in diagnostics). */
+	private statusLabel(): string {
+		const detail = this.plugin.statusDetailText;
+		switch (this.plugin.backendState) {
+			case "ok":
+				return "Ready — Uru is running on your computer.";
+			case "starting":
+				return detail ? `Setting up… ${detail}` : "Setting up…";
+			case "error":
+				return `Something went wrong${detail ? ` — ${detail}` : ""}. Try "Re-run setup", or "Copy diagnostics" for support.`;
+			default:
+				return "Not set up yet — run setup to get started.";
+		}
+	}
+
+	/** Friendly model name (basename, sans .gguf) from a full model path. */
+	private modelName(path: string): string {
+		if (!path) return "(set during setup)";
+		return path.split("/").pop()!.replace(/\.gguf$/i, "");
+	}
+
 	/** One-line summary of index state for the idle (non-running) view. */
 	private indexSummary(): string {
 		const count = this.plugin.indexedCount();
 		const last = this.plugin.settings.lastIndexedAt;
-		if (count === 0 && !last) return "No notes indexed yet.";
+		if (count === 0 && !last) return "No notes indexed yet — run this to make your vault searchable.";
 		const notes = `${count.toLocaleString()} ${count === 1 ? "note" : "notes"} indexed`;
 		return last ? `${notes} · last updated ${new Date(last).toLocaleString()}.` : `${notes}.`;
 	}
@@ -233,9 +256,9 @@ export class UruSettingTab extends PluginSettingTab {
 	/** Reassurance shown under the progress bar while indexing runs. */
 	private indexHint(): string {
 		return this.plugin.settings.extractEntities
-			? "Knowledge-graph extraction runs a local model on every note, so this can take a " +
-					"while — often a few seconds per note on large vaults. You can close this window " +
-					"and keep working; indexing continues in the background."
+			? "Deep indexing runs a local model on every note, so a large vault can take a " +
+					"while — often a few seconds per note. You can close this window and keep " +
+					"working; indexing continues in the background."
 			: "This can take a while on large vaults. You can close this window and keep working; " +
 					"indexing continues in the background.";
 	}
