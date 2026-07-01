@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Indexing no longer reports success it didn't achieve.** A note is now counted as indexed only once it's been durably recorded, and the run is marked complete only when the whole queue processed with zero failures. Previously the progress bar advanced on every *attempt* (so it could reach 100% while notes were actually failing), and any finish — even one where most notes failed — cleared the "resume" state. A run with failures now stays resumable, keeps an accurate indexed count, and ends with an honest "indexed X of N — Y failed, run again to retry the rest" message. (Deep-mode extraction can be slow enough that a note's request is dropped before it completes; this makes that visible and recoverable instead of silently losing the run's progress.)
+
 ## [0.1.6] — 2026-07-01
 
 ### Added
