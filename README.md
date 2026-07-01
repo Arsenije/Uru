@@ -24,14 +24,18 @@ It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first knowled
 
 ### Install manually
 
-1. **Get the plugin files.** Download **`uru-v<version>.zip`** from the **Assets** section of the [latest release](../../releases/latest) — ⚠️ **not** the "Source code (zip)" link, which doesn't include the built `main.js` and will fail to load. (Or build from source:)
-   ```bash
-   git clone https://github.com/Arsenije/Uru.git
-   cd Uru
-   npm install
-   npm run build        # produces main.js
-   ```
-2. **Drop it into your vault.** Create `<your-vault>/.obsidian/plugins/uru/` and place `main.js`, `manifest.json`, and `styles.css` inside it (from the release zip or the repo root after building).
+**Option A — prebuilt release (no Node needed):** download **`uru-v<version>.zip`** from the **Assets** section of the [latest release](../../releases/latest) — ⚠️ **not** the "Source code (zip)" link, which omits the built `main.js` and fails to load. Extract the whole `uru/` folder into `<your-vault>/.obsidian/plugins/` (the zip already contains `main.js`, `manifest.json`, `styles.css`, and the `sidecar/` backend).
+
+**Option B — build from source (needs [Node.js](https://nodejs.org) 18+):** one command builds it and copies everything into place:
+```bash
+git clone https://github.com/Arsenije/Uru.git
+cd Uru
+npm install
+npm run install-plugin -- "<your-vault>"    # builds, then deploys into .obsidian/plugins/uru/
+```
+
+Then, either way:
+
 3. **Enable it.** In Obsidian: **Settings → Community plugins → enable Uru**.
 4. **Run setup.** A dialog opens — pick **Lite** (fast semantic search) or **Full** (also builds the knowledge graph), then **Install & start**. The first run downloads ~3 GB and sets up a private Python environment. This is one-time; later launches are fast.
 5. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Recall"** or open the chat (💬 ribbon icon).
@@ -59,17 +63,17 @@ STEP 1 — get the plugin files. Pick ONE:
     git clone https://github.com/Arsenije/Uru.git
     cd Uru
     npm install
-    npm run build                         # SUCCESS: main.js now exists in the repo root
-    mkdir -p "<VAULT>/.obsidian/plugins/uru"
-    cp main.js manifest.json styles.css "<VAULT>/.obsidian/plugins/uru/"
+    npm run install-plugin -- "<VAULT>"   # builds AND copies everything (incl. the
+                                          # sidecar/ backend) into .obsidian/plugins/uru/
 
 STEP 2 — VERIFY staging (headless; the last thing you can check before the GUI):
   If you built from source (Option B), run the bundled checker:
     node scripts/verify-staging.mjs "<VAULT>"     # prints "OK: Uru <version> staged ..."
-  Otherwise just confirm these three files exist and are non-empty:
+  Otherwise (release-zip install) confirm these exist and are non-empty:
     <VAULT>/.obsidian/plugins/uru/main.js
     <VAULT>/.obsidian/plugins/uru/manifest.json
     <VAULT>/.obsidian/plugins/uru/styles.css
+    <VAULT>/.obsidian/plugins/uru/sidecar/pyproject.toml   (backend — must be present)
   Do NOT hand off until this passes.
 
 STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
@@ -95,9 +99,9 @@ DO NOT:
 | Key | Value |
 |---|---|
 | Plugin id | `uru` |
-| Plugin files to deploy | `main.js`, `manifest.json`, `styles.css` |
+| Plugin files to deploy | `main.js`, `manifest.json`, `styles.css`, and `sidecar/` (backend) |
 | Deploy target | `<VAULT>/.obsidian/plugins/uru/` |
-| Build command (source install only) | `npm install && npm run build` |
+| Install from source (build + deploy) | `npm install && npm run install-plugin -- "<VAULT>"` |
 | Headless staging check | `node scripts/verify-staging.mjs "<VAULT>"` |
 | Platforms | macOS, Windows, Linux (desktop only; **no mobile**) |
 | Runtime prerequisites | None — Python 3.13, llama.cpp, and models auto-download on first run |

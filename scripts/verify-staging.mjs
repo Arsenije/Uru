@@ -37,6 +37,13 @@ for (const f of ["main.js", "manifest.json", "styles.css"]) {
 	else if (statSync(p).size === 0) problems.push(`empty file: ${f}`);
 }
 
+// The Python sidecar must ship inside the plugin folder — the first-run
+// bootstrap pip-installs it. A plugin that loads but lacks this can't start
+// its backend.
+for (const f of ["sidecar/pyproject.toml", "sidecar/uru_sidecar/__main__.py"]) {
+	if (!existsSync(join(dir, f))) problems.push(`missing sidecar file: ${f}`);
+}
+
 let manifest;
 const manifestPath = join(dir, "manifest.json");
 if (existsSync(manifestPath)) {
@@ -53,7 +60,7 @@ if (existsSync(manifestPath)) {
 if (problems.length) {
 	console.error("FAIL: Uru is not staged correctly:");
 	for (const p of problems) console.error(`  - ${p}`);
-	console.error(`\nExpected ${dir}/ to contain main.js, manifest.json, styles.css.`);
+	console.error(`\nExpected ${dir}/ to contain main.js, manifest.json, styles.css, and sidecar/.`);
 	process.exit(1);
 }
 
