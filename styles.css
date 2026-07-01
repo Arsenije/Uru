@@ -178,6 +178,46 @@
 .uru-empty-btn {
 	cursor: pointer;
 }
+/* Deep/Quick chooser in the chat first-run empty state */
+.uru-choice {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+	margin: 0.2rem 0 0.5rem;
+	text-align: left;
+}
+.uru-choice-opt {
+	display: flex;
+	gap: 0.5rem;
+	padding: 0.5rem 0.6rem;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	cursor: pointer;
+}
+.uru-choice-opt:hover {
+	background: var(--background-modifier-hover);
+}
+.uru-choice-opt.is-selected {
+	border-color: var(--interactive-accent);
+	background: var(--background-modifier-hover);
+}
+.uru-choice-opt input {
+	margin-top: 0.2rem;
+}
+.uru-choice-label {
+	font-weight: var(--font-semibold);
+	color: var(--text-normal);
+}
+.uru-choice-desc {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	line-height: 1.4;
+}
+.uru-choice-note {
+	margin: 0 0 0.4rem;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+}
 .uru-progress {
 	display: flex;
 	flex-direction: column;
