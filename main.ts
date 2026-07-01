@@ -28,6 +28,7 @@ export default class UruPlugin extends Plugin {
 	private status: HealthResponse["status"] | "uninstalled" = "uninstalled";
 	private statusDetail = "";
 	private indexStatus: IndexStatus | null = null;
+	private indexStatusListeners = new Set<(s: IndexStatus | null) => void>();
 	private statusBar!: HTMLElement;
 	private eventOffs: Array<() => void> = [];
 
@@ -220,6 +221,7 @@ export default class UruPlugin extends Plugin {
 			(s) => {
 				this.indexStatus = s;
 				this.renderStatusBar();
+				for (const cb of this.indexStatusListeners) cb(s);
 			},
 		);
 		await this.indexer.load();
@@ -244,6 +246,27 @@ export default class UruPlugin extends Plugin {
 	/** Number of notes currently tracked as indexed. */
 	indexedCount(): number {
 		return this.indexer?.indexedCount() ?? 0;
+	}
+
+	/** True while a full index is running. */
+	isIndexing(): boolean {
+		return this.indexer?.isIndexing ?? false;
+	}
+
+	/** True once the backend is up and can accept indexing/chat calls. */
+	backendReady(): boolean {
+		return this.client() !== null && this.indexer !== null;
+	}
+
+	/**
+	 * Subscribe to index-status changes (used by views to mirror the status
+	 * bar's progress). The callback fires immediately with the current status,
+	 * then on every subsequent tick. Returns an unsubscribe fn.
+	 */
+	onIndexStatus(cb: (s: IndexStatus | null) => void): () => void {
+		this.indexStatusListeners.add(cb);
+		cb(this.indexStatus);
+		return () => this.indexStatusListeners.delete(cb);
 	}
 
 	async runSetup(): Promise<void> {

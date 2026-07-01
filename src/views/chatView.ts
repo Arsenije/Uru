@@ -1,6 +1,7 @@
 import { ItemView, MarkdownRenderer, Notice, WorkspaceLeaf } from "obsidian";
 import type UruPlugin from "../../main";
 import type { ChatCitation, ChatMessage, NoteContext } from "../sidecar/client";
+import type { IndexStatus } from "../indexing/indexer";
 
 export const URU_CHAT_VIEW = "uru-chat-view";
 
@@ -9,9 +10,15 @@ type ChatScope = "vault" | "note";
 export class ChatView extends ItemView {
 	private messagesEl!: HTMLElement;
 	private input!: HTMLTextAreaElement;
+	private sendBtn!: HTMLButtonElement;
 	private history: ChatMessage[] = [];
 	private busy = false;
 	private chatScope: ChatScope = "vault";
+	private unsubIndex: (() => void) | null = null;
+	private emptyEl: HTMLElement | null = null;
+	private progressFill: HTMLElement | null = null;
+	private progressLabel: HTMLElement | null = null;
+	private lastStatus: IndexStatus | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -66,16 +73,115 @@ export class ChatView extends ItemView {
 				void this.send();
 			}
 		});
-		bar.createEl("button", { text: "Send", cls: "mod-cta" }).addEventListener("click", () => void this.send());
+		this.sendBtn = bar.createEl("button", { text: "Send", cls: "mod-cta" });
+		this.sendBtn.addEventListener("click", () => void this.send());
+
+		// First-run gate: mirror the indexer's progress so an unindexed vault
+		// shows an "index your vault" prompt instead of a dead chat box. The
+		// callback fires immediately with the current status on subscribe.
+		this.unsubIndex = this.plugin.onIndexStatus((s) => this.onIndexStatusUpdate(s));
 	}
 
 	focusInput(): void {
 		this.input?.focus();
 	}
 
+	/** No notes tracked yet — chat can't answer until the vault is indexed. */
+	private get unindexed(): boolean {
+		return this.plugin.indexedCount() === 0;
+	}
+
+	private onIndexStatusUpdate(status: IndexStatus | null): void {
+		this.lastStatus = status;
+		if (status === null) {
+			// Indexing idle. If the vault now has content, lift the gate;
+			// otherwise (never indexed, or stopped before any note) show the prompt.
+			if (this.unindexed) this.renderEmptyState(null);
+			else this.clearGate();
+			return;
+		}
+		// In-progress tick: update the bar in place if it's showing, else render it.
+		if (this.progressFill && this.progressLabel) {
+			this.updateProgress(status);
+		} else {
+			this.renderEmptyState(status);
+		}
+	}
+
+	private setComposerEnabled(enabled: boolean): void {
+		this.input.disabled = !enabled;
+		this.sendBtn.disabled = !enabled;
+		this.input.placeholder = enabled
+			? "Ask your vault… (Enter to send, Shift+Enter for newline)"
+			: "Index your vault to start chatting…";
+	}
+
+	/** Remove the empty-state prompt and re-enable the composer. */
+	private clearGate(): void {
+		this.emptyEl?.remove();
+		this.emptyEl = null;
+		this.progressFill = this.progressLabel = null;
+		this.setComposerEnabled(true);
+	}
+
+	/** Show the first-run prompt (copy + button), or a progress bar while indexing. */
+	private renderEmptyState(status: IndexStatus | null): void {
+		this.setComposerEnabled(false);
+		this.messagesEl.empty();
+		this.progressFill = this.progressLabel = null;
+		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
+		this.emptyEl = box;
+		box.createEl("div", { cls: "uru-empty-title", text: "Chat with your vault" });
+		box.createEl("p", {
+			cls: "uru-empty-copy",
+			text:
+				"Uru reads your notes before it can answer. Indexing runs once, on your " +
+				"machine — a few minutes for a large vault. You can keep working while it runs.",
+		});
+		const action = box.createDiv({ cls: "uru-empty-action" });
+		if (status !== null || this.plugin.isIndexing()) {
+			this.renderProgress(action, status);
+		} else {
+			const btn = action.createEl("button", { cls: "mod-cta uru-empty-btn", text: "Index my vault" });
+			btn.addEventListener("click", () => {
+				if (!this.plugin.backendReady()) {
+					new Notice("Uru is still starting — one moment…");
+					return;
+				}
+				this.renderProgress(action, null); // button → bar immediately
+				void this.plugin.reindex(false);
+			});
+		}
+	}
+
+	private renderProgress(parent: HTMLElement, status: IndexStatus | null): void {
+		parent.empty();
+		const wrap = parent.createDiv({ cls: "uru-progress" });
+		const track = wrap.createDiv({ cls: "uru-progress-track" });
+		this.progressFill = track.createDiv({ cls: "uru-progress-fill" });
+		this.progressLabel = wrap.createDiv({ cls: "uru-progress-label" });
+		if (status) {
+			this.updateProgress(status);
+		} else {
+			track.addClass("is-indeterminate");
+			this.progressLabel.setText("Starting…");
+		}
+	}
+
+	private updateProgress(status: IndexStatus): void {
+		if (!this.progressFill || !this.progressLabel) return;
+		this.progressFill.parentElement?.removeClass("is-indeterminate");
+		const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
+		this.progressFill.style.width = `${pct}%`;
+		this.progressLabel.setText(`Indexing ${status.done}/${status.total}…`);
+	}
+
 	private reset(): void {
 		this.history = [];
 		this.messagesEl.empty();
+		this.emptyEl = null;
+		this.progressFill = this.progressLabel = null;
+		if (this.unindexed) this.renderEmptyState(this.lastStatus);
 	}
 
 	private addBubble(role: "user" | "assistant"): HTMLElement {
@@ -99,7 +205,7 @@ export class ChatView extends ItemView {
 
 	private async send(): Promise<void> {
 		const query = this.input.value.trim();
-		if (!query || this.busy) return;
+		if (!query || this.busy || this.input.disabled) return;
 		const client = this.plugin.client();
 		if (!client) {
 			new Notice("Uru backend not ready");
@@ -163,6 +269,8 @@ export class ChatView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.unsubIndex?.();
+		this.unsubIndex = null;
 		this.contentEl.empty();
 	}
 }
