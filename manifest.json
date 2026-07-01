@@ -1,7 +1,7 @@
 {
 	"id": "uru",
 	"name": "Uru",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"minAppVersion": "0.15.0",
 	"description": "Knowledge graph + vector search for your vault, powered by khora.",
 	"author": "Arsenije",
