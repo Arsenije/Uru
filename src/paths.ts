@@ -25,3 +25,8 @@ export function runtimeDir(): string {
 export function vaultDataDir(vaultKey: string): string {
 	return join(appDataDir(), "vaults", vaultKey);
 }
+
+/** Registry of vaults sharing the runtime, so cleanup can tell if it's safe to remove. */
+export function registryPath(): string {
+	return join(appDataDir(), "vaults.json");
+}
