@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Consistent plain-language copy across every surface.** Removed the remaining "knowledge graph" / "Lite" / "Full" wording (which clashed with Obsidian's graph view) in favor of the **Quick / Deep** vocabulary and a "maps how your notes connect" framing — in the Recall command, the manifest description, and the README. Softened "backend" out of user-facing error notices (power-user command names stay as-is). Renamed the Recall panel's "Entities" heading to "People & topics".
+
+### Fixed
+- A failed first-run setup (e.g. the local AI service didn't start, so no note was indexed) no longer shows a misleading "Indexing didn't finish — Resume" prompt; it now offers a clean retry.
+
 ## [0.1.6] — 2026-07-01
 
 ### Added

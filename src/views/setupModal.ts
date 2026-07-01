@@ -3,7 +3,7 @@ import type UruPlugin from "../../main";
 
 /**
  * First-run setup: consent to the (~3 GB, one-time) local-backend download,
- * pick Lite vs Full-KG, then run the bootstrap with live progress. Also reached
+ * pick Quick vs Deep, then run the bootstrap with live progress. Also reached
  * via Settings → "Re-run setup".
  */
 export class SetupModal extends Modal {

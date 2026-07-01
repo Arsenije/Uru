@@ -2,9 +2,9 @@
 
 **Ask your Obsidian vault anything — and get answers from what you actually wrote, completely offline.**
 
-Uru turns your [Obsidian](https://obsidian.md) vault into a queryable **knowledge graph + semantic search index**. Drop in your notes and Uru reads them, links the people, projects, and ideas inside, and lets you *recall* or *chat* with the whole vault — with citations back to the exact notes. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
+Uru makes your [Obsidian](https://obsidian.md) vault searchable by meaning and lets you *recall* or *chat* with everything you've written — with citations back to the exact notes. In **Deep** mode it also maps the people, projects, and ideas across your notes and how they connect. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
 
-It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first knowledge-graph + vector-search library. Obsidian can't run Python, so Uru ships a tiny local backend that drives khora for you — you never have to touch it.
+It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first search-and-connections library. Obsidian can't run Python, so Uru ships a tiny local backend that drives khora for you — you never have to touch it.
 
 <!-- Drop a screenshot of the recall/chat panel here: ![Uru](docs/screenshot.png) -->
 
@@ -12,7 +12,7 @@ It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first knowled
 
 - **Recall.** Ask a question and get the most relevant passages from across your vault — semantic, not keyword. Each result links back to its note.
 - **Chat with your vault.** A RAG chat panel that answers from your notes and cites them by `[1]`, `[2]`. Scope it to the whole vault or just the current note.
-- **Build a knowledge graph.** In Full mode, Uru extracts entities (people, orgs, concepts, places…) and relationships from each note, so recall can follow connections, not just similarity.
+- **Map the connections.** In Deep mode, Uru maps the people, places, and ideas across your notes and how they relate, so recall can follow connections, not just similarity.
 - **Index automatically.** New and changed notes are picked up as you write; deletes and renames are handled too. No manual re-sync.
 - **Stay private.** No account, no API keys, no network calls after the one-time model download. Your notes never leave your computer.
 
@@ -37,7 +37,7 @@ npm run install-plugin -- "<your-vault>"    # builds, then deploys into .obsidia
 Then, either way:
 
 3. **Enable it.** In Obsidian: **Settings → Community plugins → enable Uru**.
-4. **Run setup.** A dialog opens — pick **Lite** (fast semantic search) or **Full** (also builds the knowledge graph), then **Install & start**. The first run downloads ~3 GB and sets up a private Python environment. This is one-time; later launches are fast.
+4. **Run setup.** A dialog opens — pick **Quick** (fast search by meaning) or **Deep** (also maps how your notes connect), then **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
 5. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Recall"** or open the chat (💬 ribbon icon).
 
 ### For AI assistants
@@ -78,8 +78,8 @@ STEP 2 — VERIFY staging (headless; the last thing you can check before the GUI
 
 STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
   Tell them: "Open Obsidian → Settings → Community plugins → enable 'Uru'.
-  A setup dialog appears — choose Lite (fast) or Full (knowledge graph),
-  then click 'Install & start'. The first run downloads ~3 GB; wait for it."
+  A setup dialog appears — choose Quick (fast) or Deep (also maps how your
+  notes connect), then click 'Install & start'. The first run downloads ~3 GB; wait for it."
 
 STEP 4 — tell them the success signal:
   The Obsidian status bar shows `Uru ✓`. If it shows `Uru ✕`, the setup
@@ -112,7 +112,7 @@ DO NOT:
 
 ## Privacy
 
-This is the whole point of Uru: **everything happens on your own computer.** Entity extraction and embeddings run on local GGUF models through llama.cpp; storage is an embedded SQLite + LanceDB database. No account, no API keys, and — after the one-time model download — no network calls. Your notes are never copied or uploaded.
+This is the whole point of Uru: **everything happens on your own computer.** All the AI runs on local models through llama.cpp, and everything is stored in an on-disk database on your machine. No account, no API keys, and — after the one-time model download — no network calls. Your notes are never copied or uploaded.
 
 The backend (the Python environment, models, llama.cpp binary, and the index/database) lives **outside your vault**, in per-user app-data, so it survives plugin updates and is never touched by Obsidian Sync:
 
@@ -128,25 +128,25 @@ To wipe everything (models, environment, index), run the command **"Uru: Delete 
 
 | Your setup | What to expect |
 |---|---|
-| **Apple Silicon (M1–M4)** | Best experience — chat/extraction run on the Metal GPU. Lite indexing is near-instant; Full-KG is comfortably usable. |
-| **Intel Macs** | CPU-only. Lite is fine; Full-KG indexing is slow (large vaults take a while). |
-| **Windows / Linux** | CPU builds of llama.cpp. Lite is fine; Full-KG is slow — index overnight or use Lite. |
+| **Apple Silicon (M1–M4)** | Best experience — the models run on the Metal GPU. Quick indexing is near-instant; Deep is comfortably usable. |
+| **Intel Macs** | CPU-only. Quick is fine; Deep indexing is slow (large vaults take a while). |
+| **Windows / Linux** | CPU builds of llama.cpp. Quick is fine; Deep is slow — index overnight or use Quick. |
 | **Memory** | A few GB of RAM while running (a 3B chat model plus an embedding model stay resident). Closing the panels lets the backend idle-shut-down after ~2 min. |
 
-## Lite vs Full
+## Quick vs Deep
 
-You choose this at setup and can change it later in **Settings → Uru** (then restart the backend and force-reindex).
+You choose this at setup and can change it later in **Settings → Uru** (then restart Uru and re-index everything).
 
-- **Lite** — embeddings only. Fast, cheap, near-instant indexing. Great semantic recall and chat. No graph.
-- **Full** — everything in Lite **plus** a knowledge graph: Uru runs the chat model on each note (~5–30s per note locally) to extract entities and relationships, so recall can follow connections between notes.
+- **Quick** — search by meaning only. Fast, near-instant indexing. Great recall and chat. No connections map.
+- **Deep** — everything in Quick **plus** a map of how your notes connect: Uru reads each note with a local model (~5–30s per note) to find the people, places, and ideas and how they relate, so recall can follow connections between notes.
 
-Switching modes re-extracts affected notes automatically on the next **Force re-index** — no manual cleanup needed.
+Switching modes re-indexes affected notes automatically on the next **Re-index everything** — no manual cleanup needed.
 
 ## Troubleshooting
 
 - **Stuck on "starting" / setup failed** — the setup dialog (and Settings → Uru) has a **Copy diagnostics** button. Paste that when reporting an issue.
 - **`Uru ✕` after it was working** — an inference server may have crashed; Uru restarts it automatically and the badge returns to `Uru ✓`. If it stays red, grab diagnostics.
-- **Indexing is slow** — that's Full-KG running the model on every note. Switch to **Lite** in Settings, or run **"Uru: Stop indexing"** any time.
+- **Indexing is slow** — that's Deep mode running the model on every note. Switch to **Quick** in Settings, or run **"Uru: Stop indexing"** any time.
 - **Start over** — **"Uru: Delete all Uru data"** removes the models, environment, and index; re-enable from Settings → Uru → "Re-run setup".
 
 ## Changelog
