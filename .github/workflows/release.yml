@@ -26,16 +26,27 @@ jobs:
           cp sidecar/uru_sidecar/*.py dist/uru/sidecar/uru_sidecar/
           (cd dist && zip -r "uru-${GITHUB_REF_NAME}.zip" uru)
           ls -la dist
+      - name: Build release notes from CHANGELOG.md
+        run: |
+          set -e
+          VER="${GITHUB_REF_NAME#v}"
+          # Print the section for this version (between "## [VER]" and the next "## [").
+          awk -v ver="$VER" '
+            $0 ~ ("^## \\[" ver "\\]") { grab=1; next }
+            grab && /^## \[/ { exit }
+            grab { print }
+          ' CHANGELOG.md > notes.md
+          # Always append the manual-install instructions (also the fallback body
+          # when the changelog has no matching section).
+          {
+            printf '\n---\n\n'
+            printf '**Manual install:** download the **`uru-%s.zip`** asset below — ⚠️ **not** "Source code (zip)", which has no built `main.js` and will fail to load. Extract the `uru/` folder into `<your-vault>/.obsidian/plugins/`, then enable Uru in Settings → Community plugins. First run downloads the local backend (~3 GB) — see the setup dialog.\n' "$GITHUB_REF_NAME"
+          } >> notes.md
+          echo '----- release notes -----'; cat notes.md
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/uru-*.zip
             manifest.json
-          body: |
-            **Manual install:** download the **`uru-${{ github.ref_name }}.zip`** asset
-            below — ⚠️ **not** "Source code (zip)", which has no built `main.js` and will
-            fail to load. Extract the `uru/` folder into
-            `<your-vault>/.obsidian/plugins/`, then enable Uru in
-            Settings → Community plugins. First run downloads the local backend
-            (~3 GB) — see the setup dialog.
+          body_path: notes.md
