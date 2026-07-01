@@ -235,6 +235,16 @@ export default class UruPlugin extends Plugin {
 		return `${this.status}${this.statusDetail ? ` — ${this.statusDetail}` : ""}`;
 	}
 
+	/** Raw backend state, for rendering a friendly status label (no detail/UUID). */
+	get backendState(): typeof this.status {
+		return this.status;
+	}
+
+	/** Extra status context (e.g. an error message), sans the raw namespace line. */
+	get statusDetailText(): string {
+		return this.statusDetail;
+	}
+
 	diagnostics(): string {
 		return this.manager?.diagnostics ?? "(backend not started)";
 	}
