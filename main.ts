@@ -28,6 +28,7 @@ export default class UruPlugin extends Plugin {
 	private status: HealthResponse["status"] | "uninstalled" = "uninstalled";
 	private statusDetail = "";
 	private indexStatus: IndexStatus | null = null;
+	private indexStatusListeners = new Set<(s: IndexStatus | null) => void>();
 	private statusBar!: HTMLElement;
 	private eventOffs: Array<() => void> = [];
 
@@ -217,10 +218,7 @@ export default class UruPlugin extends Plugin {
 			() => this.client(),
 			this.settings,
 			statePath,
-			(s) => {
-				this.indexStatus = s;
-				this.renderStatusBar();
-			},
+			(s) => this.setIndexStatus(s),
 		);
 		await this.indexer.load();
 		this.indexer.registerVaultEvents((off) => this.eventOffs.push(off));
@@ -246,6 +244,24 @@ export default class UruPlugin extends Plugin {
 		return this.indexer?.indexedCount() ?? 0;
 	}
 
+	/** Current index progress, or null when idle. */
+	currentIndexStatus(): IndexStatus | null {
+		return this.indexStatus;
+	}
+
+	/** Subscribe to index-progress updates. Returns an unsubscribe function. */
+	onIndexStatusChange(cb: (s: IndexStatus | null) => void): () => void {
+		this.indexStatusListeners.add(cb);
+		return () => {
+			this.indexStatusListeners.delete(cb);
+		};
+	}
+
+	/** Ask the running full index to stop after the current note. */
+	stopIndexing(): void {
+		this.indexer?.stop();
+	}
+
 	async runSetup(): Promise<void> {
 		if (this.manager) await this.manager.stop();
 		this.manager = null;
@@ -267,6 +283,9 @@ export default class UruPlugin extends Plugin {
 		if (completed) {
 			this.settings.lastIndexedAt = Date.now();
 			await this.saveSettings();
+			// Re-notify (still idle) so subscribed UI refreshes its summary with the
+			// newly-saved timestamp — fullIndex fired its null tick before we saved.
+			this.setIndexStatus(null);
 		}
 	}
 
@@ -302,6 +321,12 @@ export default class UruPlugin extends Plugin {
 		this.status = status;
 		this.statusDetail = detail;
 		this.renderStatusBar();
+	}
+
+	private setIndexStatus(s: IndexStatus | null): void {
+		this.indexStatus = s;
+		this.renderStatusBar();
+		for (const cb of this.indexStatusListeners) cb(s);
 	}
 
 	private renderStatusBar(): void {

@@ -1,5 +1,6 @@
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { App, ButtonComponent, PluginSettingTab, Setting, Notice } from "obsidian";
 import type UruPlugin from "../main";
+import type { IndexStatus } from "./indexing/indexer";
 
 export interface UruSettings {
 	/** Set after bootstrap: interpreter inside the uv venv. */
@@ -47,6 +48,9 @@ export const DEFAULT_SETTINGS: UruSettings = {
 };
 
 export class UruSettingTab extends PluginSettingTab {
+	/** Removes the index-progress subscription while the tab is open. */
+	private unsubscribe: (() => void) | null = null;
+
 	constructor(
 		app: App,
 		private plugin: UruPlugin,
@@ -56,13 +60,17 @@ export class UruSettingTab extends PluginSettingTab {
 
 	display(): void {
 		const { containerEl } = this;
+		// Drop any subscription left from a previous render before rebuilding.
+		this.unsubscribe?.();
+		this.unsubscribe = null;
 		containerEl.empty();
 		const s = this.plugin.settings;
 
-		containerEl.createEl("h3", { text: "Backend" });
+		// ---- Backend --------------------------------------------------------
+		new Setting(containerEl).setName("Backend").setHeading();
 
 		new Setting(containerEl)
-			.setName("Backend status")
+			.setName("Status")
 			.setDesc(this.plugin.statusText())
 			.addButton((b) =>
 				b.setButtonText("Re-run setup").onClick(async () => {
@@ -73,24 +81,27 @@ export class UruSettingTab extends PluginSettingTab {
 			.addButton((b) =>
 				b.setButtonText("Copy diagnostics").onClick(async () => {
 					await navigator.clipboard.writeText(this.plugin.diagnostics());
-					new Notice("Uru diagnostics copied");
+					new Notice("Uru diagnostics copied to clipboard");
 				}),
 			);
 
-		containerEl.createEl("h3", { text: "Indexing" });
+		// ---- Indexing options ----------------------------------------------
+		new Setting(containerEl).setName("Indexing").setHeading();
 
 		new Setting(containerEl)
 			.setName("Extract knowledge graph")
 			.setDesc(
-				"Full mode runs entity/relationship extraction per note (slower, richer). " +
-					"Off = embeddings-only semantic search (much cheaper).",
+				"Full mode reads every note with a local model to pull out entities and how " +
+					"they relate — richer recall and chat, but slower to index. Turn it off for " +
+					"embeddings-only semantic search: much faster and lighter, with no entity graph.",
 			)
 			.addToggle((t) =>
 				t.setValue(s.extractEntities).onChange(async (v) => {
 					s.extractEntities = v;
 					await this.plugin.saveSettings();
 					new Notice(
-						"Uru: mode changed. Restart the backend, then Force re-index to apply it.",
+						"Uru: indexing mode changed. Restart the backend, then run a full " +
+							"re-index to apply it to existing notes.",
 						6000,
 					);
 				}),
@@ -98,7 +109,7 @@ export class UruSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Index on startup")
-			.setDesc("Re-scan the vault for changes each time the plugin loads.")
+			.setDesc("Scan the vault for new and changed notes automatically each time Obsidian loads.")
 			.addToggle((t) =>
 				t.setValue(s.autoIndexOnStartup).onChange(async (v) => {
 					s.autoIndexOnStartup = v;
@@ -108,7 +119,7 @@ export class UruSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Include frontmatter")
-			.setDesc("Index the YAML frontmatter text in addition to note body.")
+			.setDesc("Index the YAML frontmatter at the top of each note, not just the body text.")
 			.addToggle((t) =>
 				t.setValue(s.includeFrontmatter).onChange(async (v) => {
 					s.includeFrontmatter = v;
@@ -118,7 +129,7 @@ export class UruSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Ignore patterns")
-			.setDesc("Glob patterns to skip (one per line).")
+			.setDesc("Glob patterns for files and folders to skip — one per line.")
 			.addTextArea((t) => {
 				t.setValue(s.ignoreGlobs.join("\n")).onChange(async (v) => {
 					s.ignoreGlobs = v.split("\n").map((x) => x.trim()).filter(Boolean);
@@ -127,31 +138,69 @@ export class UruSettingTab extends PluginSettingTab {
 				t.inputEl.rows = 4;
 			});
 
-		const last = s.lastIndexedAt ? new Date(s.lastIndexedAt).toLocaleString() : "never";
-		const count = this.plugin.indexedCount();
-		new Setting(containerEl)
-			.setName("Re-index vault")
-			.setDesc(`${count} files indexed. Last indexed: ${last}.`)
-			.addButton((b) =>
-				b
-					.setCta()
-					.setButtonText("Index new/changed")
-					.onClick(async () => {
-						await this.plugin.reindex(false);
-						this.display();
-					}),
-			)
-			.addButton((b) =>
-				b
-					.setButtonText("Force re-index all")
-					.setTooltip("Re-send every note, ignoring the change detector")
-					.onClick(async () => {
-						await this.plugin.reindex(true);
-						this.display();
-					}),
-			);
+		// ---- Index your vault (action + live progress) ---------------------
+		new Setting(containerEl).setName("Index your vault").setHeading();
 
-		containerEl.createEl("h3", { text: "Models" });
+		let indexBtn!: ButtonComponent;
+		let forceBtn!: ButtonComponent;
+		let stopBtn!: ButtonComponent;
+		const action = new Setting(containerEl)
+			.setName("Update the index")
+			.setDesc(this.indexSummary())
+			.addButton((b) => {
+				indexBtn = b
+					.setCta()
+					.setButtonText("Index new & changed")
+					.setTooltip("Index notes added or edited since the last run")
+					.onClick(() => void this.plugin.reindex(false));
+			})
+			.addButton((b) => {
+				forceBtn = b
+					.setButtonText("Re-index everything")
+					.setTooltip("Re-send every note, ignoring the change detector")
+					.onClick(() => void this.plugin.reindex(true));
+			})
+			.addButton((b) => {
+				stopBtn = b
+					.setWarning()
+					.setButtonText("Stop")
+					.setTooltip("Stop after the current note finishes")
+					.onClick(() => {
+						this.plugin.stopIndexing();
+						new Notice("Uru: stopping after the current note…");
+					});
+			});
+
+		const progressEl = containerEl.createDiv("uru-progress");
+		const fill = progressEl.createDiv("uru-progress-track").createDiv("uru-progress-fill");
+		const meta = progressEl.createDiv("uru-progress-meta");
+		const countEl = meta.createSpan();
+		const currentEl = meta.createSpan({ cls: "uru-progress-current" });
+		const hintEl = progressEl.createDiv("uru-progress-hint");
+
+		const apply = (status: IndexStatus | null) => {
+			const active = status !== null;
+			indexBtn.setDisabled(active);
+			forceBtn.setDisabled(active);
+			stopBtn.buttonEl.toggle(active);
+			progressEl.toggle(active);
+			if (status) {
+				const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
+				fill.style.width = `${pct}%`;
+				countEl.setText(
+					`${status.done.toLocaleString()} / ${status.total.toLocaleString()} notes · ${pct}%`,
+				);
+				currentEl.setText(status.current);
+				hintEl.setText(this.indexHint());
+			} else {
+				action.setDesc(this.indexSummary());
+			}
+		};
+		apply(this.plugin.currentIndexStatus());
+		this.unsubscribe = this.plugin.onIndexStatusChange(apply);
+
+		// ---- Models ---------------------------------------------------------
+		new Setting(containerEl).setName("Models").setHeading();
 		new Setting(containerEl)
 			.setName("Chat / extraction model")
 			.setDesc(s.chatModelPath || "(set during setup)")
@@ -159,9 +208,33 @@ export class UruSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Embedding model")
 			.setDesc(
-				`${s.embedModelPath || "(set during setup)"} — dim ${s.embeddingDimension}. ` +
+				`${s.embedModelPath || "(set during setup)"} — ${s.embeddingDimension} dimensions. ` +
 					"Changing this requires a full re-index.",
 			)
 			.setDisabled(true);
+	}
+
+	hide(): void {
+		this.unsubscribe?.();
+		this.unsubscribe = null;
+	}
+
+	/** One-line summary of index state for the idle (non-running) view. */
+	private indexSummary(): string {
+		const count = this.plugin.indexedCount();
+		const last = this.plugin.settings.lastIndexedAt;
+		if (count === 0 && !last) return "No notes indexed yet.";
+		const notes = `${count.toLocaleString()} ${count === 1 ? "note" : "notes"} indexed`;
+		return last ? `${notes} · last updated ${new Date(last).toLocaleString()}.` : `${notes}.`;
+	}
+
+	/** Reassurance shown under the progress bar while indexing runs. */
+	private indexHint(): string {
+		return this.plugin.settings.extractEntities
+			? "Knowledge-graph extraction runs a local model on every note, so this can take a " +
+					"while — often a few seconds per note on large vaults. You can close this window " +
+					"and keep working; indexing continues in the background."
+			: "This can take a while on large vaults. You can close this window and keep working; " +
+					"indexing continues in the background.";
 	}
 }

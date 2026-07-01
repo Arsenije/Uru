@@ -152,6 +152,43 @@
 	resize: vertical;
 }
 
+/* Uru settings — indexing progress */
+.uru-progress {
+	margin: 0.2rem 0 1rem;
+}
+.uru-progress-track {
+	height: 6px;
+	border-radius: 3px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+.uru-progress-fill {
+	height: 100%;
+	width: 0%;
+	background: var(--interactive-accent);
+	transition: width 0.2s ease;
+}
+.uru-progress-meta {
+	display: flex;
+	justify-content: space-between;
+	gap: 0.75rem;
+	margin-top: 0.35rem;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+.uru-progress-current {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+.uru-progress-hint {
+	margin-top: 0.4rem;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-faint);
+	line-height: 1.4;
+}
+
 /* Uru setup modal */
 .uru-setup-log {
 	max-height: 220px;
