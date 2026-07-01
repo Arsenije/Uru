@@ -151,9 +151,7 @@ Switching modes re-extracts affected notes automatically on the next **Force re-
 
 ## Changelog
 
-**0.1.0 — beta**
-- First public beta: local knowledge-graph + semantic search and RAG chat for Obsidian, fully offline.
-- Hardened bootstrap (self-repairs a partial install), llama-server crash supervision with a truthful status badge, automatic Lite↔Full re-extraction, and revision-pinned model downloads.
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ## How it works (for the curious)
 
