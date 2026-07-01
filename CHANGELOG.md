@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-07-01
+
+### Added
+- **`CHANGELOG.md`** — a dedicated, backfilled release history (0.1.0–0.1.5), replacing the inline README section.
+
+### Changed
+- **GitHub release notes are now generated from this changelog.** The release workflow reads the matching version section from `CHANGELOG.md` (falling back to the manual-install instructions), so each release documents what actually changed instead of repeating boilerplate.
+
 ## [0.1.5] — 2026-07-01
 
 ### Changed
@@ -61,7 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - First public beta: local knowledge-graph + semantic search and RAG chat for Obsidian, fully offline.
 
-[Unreleased]: https://github.com/Arsenije/Uru/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/Arsenije/Uru/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/Arsenije/Uru/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Arsenije/Uru/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Arsenije/Uru/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/Arsenije/Uru/compare/v0.1.2...v0.1.3
