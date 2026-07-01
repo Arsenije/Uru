@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
+import { requestUrl } from "obsidian";
 
 export interface BackendPaths {
 	pythonPath: string;
@@ -98,9 +99,16 @@ async function probeKhoraVersion(py: string): Promise<string | null> {
 }
 
 async function download(url: string, dest: string): Promise<void> {
-	const resp = await fetch(url, { redirect: "follow" });
-	if (!resp.ok) throw new Error(`download failed (HTTP ${resp.status}): ${url}`);
-	writeFileSync(dest, Buffer.from(await resp.arrayBuffer()));
+	// Use Obsidian's requestUrl, NOT fetch(). The plugin runs in the Chromium
+	// renderer, where fetch() is CORS-bound: GitHub release assets 302-redirect
+	// to release-assets.githubusercontent.com, which sends no CORS headers, so a
+	// renderer fetch rejects with "Failed to fetch". requestUrl runs in the main
+	// process (Electron net) — no CORS, follows redirects, honors system proxies.
+	const resp = await requestUrl({ url, method: "GET", throw: false });
+	if (resp.status < 200 || resp.status >= 300) {
+		throw new Error(`download failed (HTTP ${resp.status}): ${url}`);
+	}
+	writeFileSync(dest, Buffer.from(resp.arrayBuffer));
 }
 
 /** Extract .tar.gz or .zip via bsdtar (`tar -xf`), available on macOS/Linux/Win10+. */
