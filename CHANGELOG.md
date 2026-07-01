@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **"Danger zone" in Settings** with two scoped cleanup actions — "Reset this vault's Uru data" and "Remove Uru completely" — backed by a small `vaults.json` registry, so cleanup never deletes another vault's index or a shared backend it still needs. This makes it easy to fully clean up (models, Python environment, index) before removing the plugin, since Obsidian's own uninstall only removes the in-vault plugin folder.
+
+### Removed
+- The command-palette-only "Delete all Uru data" command, which wiped every vault's data unconditionally — replaced by the scoped Danger zone actions above.
+
 ## [0.1.6] — 2026-07-01
 
 ### Added

@@ -5,7 +5,7 @@ import {
 	Plugin,
 	WorkspaceLeaf,
 } from "obsidian";
-import { mkdirSync, realpathSync } from "fs";
+import { mkdirSync, realpathSync, rmSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -18,8 +18,10 @@ import { Indexer, type IndexStatus } from "./src/indexing/indexer";
 import { RecallView, URU_RECALL_VIEW } from "./src/views/recallView";
 import { ChatView, URU_CHAT_VIEW } from "./src/views/chatView";
 import { SetupModal } from "./src/views/setupModal";
-import { appDataDir } from "./src/paths";
-import { rmSync } from "fs";
+import { otherActiveVaults, removeVault, touchVault, type VaultRegistryEntry } from "./src/vaultRegistry";
+
+/** What "Danger zone" cleanup removes: just this vault's data, or the shared backend too. */
+export type DeleteScope = "vault-only" | "vault-and-runtime";
 
 export default class UruPlugin extends Plugin {
 	settings!: UruSettings;
@@ -89,11 +91,6 @@ export default class UruPlugin extends Plugin {
 			id: "uru-restart-backend",
 			name: "Restart backend",
 			callback: () => void this.restartBackend(),
-		});
-		this.addCommand({
-			id: "uru-delete-data",
-			name: "Delete all Uru data (models, venv, index)",
-			callback: () => void this.deleteAllData(),
 		});
 
 		if (Platform.isMobile) {
@@ -170,19 +167,60 @@ export default class UruPlugin extends Plugin {
 		await this.bootSilent();
 	}
 
-	private async deleteAllData(): Promise<void> {
+	/** Other vaults still registered as sharing the runtime — never treat "unknown" as safe. */
+	async deleteDataPreflight(): Promise<{ otherVaults: VaultRegistryEntry[] | "unknown" }> {
+		return { otherVaults: otherActiveVaults(this.settings.vaultKey) };
+	}
+
+	/**
+	 * Scoped cleanup for the Settings "Danger zone". `vault-only` resets just this
+	 * vault's index/db and leaves the shared backend installed and bootable.
+	 * `vault-and-runtime` also removes the shared uv venv/models/llama.cpp binary —
+	 * it re-checks for other vaults right before doing so, since a vault could start
+	 * sharing the runtime in the moments between the confirm dialog opening and the
+	 * user clicking through it.
+	 */
+	async deleteData(scope: DeleteScope): Promise<void> {
+		if (!this.settings.vaultKey) return; // nothing set up yet — avoid rmSync on an empty-keyed path
 		if (this.manager) {
 			await this.manager.stop();
 			this.manager = null;
 		}
 		this.indexer = null;
 		try {
-			rmSync(appDataDir(), { recursive: true, force: true });
-			this.settings.installed = false;
+			rmSync(vaultDataDir(this.settings.vaultKey), { recursive: true, force: true });
+			removeVault(this.settings.vaultKey);
 			this.settings.namespaceId = null;
+			this.settings.lastIndexedAt = null;
+			this.settings.indexInterrupted = false;
+			this.settings.indexRemaining = null;
+
+			let deletedRuntime = false;
+			if (scope === "vault-and-runtime") {
+				const others = otherActiveVaults(this.settings.vaultKey);
+				if (others === "unknown" || others.length === 0) {
+					rmSync(runtimeDir(), { recursive: true, force: true });
+					this.settings.installed = false;
+					this.settings.pythonPath = "";
+					this.settings.sidecarCwd = "";
+					this.settings.chatModelPath = "";
+					this.settings.embedModelPath = "";
+					deletedRuntime = true;
+				} else {
+					new Notice("Uru: another vault started using Uru — kept the shared backend.");
+				}
+			}
+
 			await this.saveSettings();
-			this.setStatus("uninstalled", "data deleted");
-			new Notice("Uru: deleted all data (models, venv, index). Re-run setup to reinstall.");
+			this.setStatus("uninstalled", deletedRuntime ? "data deleted" : "vault reset");
+			new Notice(
+				deletedRuntime
+					? "Uru: all data deleted (models, Python environment, and this vault's index). " +
+							"You can now safely remove the Uru plugin from Community plugins — nothing is left behind."
+					: "Uru: this vault's data was reset. The shared backend was kept — re-run indexing " +
+							"or setup to continue using Uru here.",
+				8000,
+			);
 		} catch (e) {
 			new Notice(`Uru: cleanup failed — ${(e as Error).message}`);
 		}
@@ -197,6 +235,15 @@ export default class UruPlugin extends Plugin {
 		this.settings.installed = true;
 		if (!this.settings.vaultKey) this.settings.vaultKey = randomUUID();
 		await this.saveSettings();
+		const adapter = this.app.vault.adapter;
+		if (adapter instanceof FileSystemAdapter) {
+			touchVault({
+				vaultKey: this.settings.vaultKey,
+				vaultPath: adapter.getBasePath(),
+				vaultName: this.app.vault.getName(),
+				lastSeen: Date.now(),
+			});
+		}
 	}
 
 	private async startSidecar(b: BackendPaths, vaultDir: string): Promise<void> {

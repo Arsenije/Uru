@@ -25,7 +25,9 @@ export class SetupModal extends Modal {
 				"Uru adds AI-powered search to your vault, and everything runs on your own " +
 				"computer — nothing goes to the cloud, and there's no account or API key to set up. " +
 				"The first time, Uru downloads about 3 GB (the AI models it needs) and installs a " +
-				"few components. This happens once. Your notes never leave your machine.",
+				"few components. This happens once. Your notes never leave your machine. " +
+				"(Uninstalling later is two steps — clean up from Settings → Uru → Danger zone " +
+				"first, then remove the plugin.)",
 		});
 
 		let fullKg = this.plugin.settings.extractEntities;
