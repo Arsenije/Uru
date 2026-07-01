@@ -24,7 +24,7 @@ It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first knowled
 
 ### Install manually
 
-1. **Get the plugin files.** Either download `uru-v<version>.zip` from the [Releases](../../releases) page, **or** build from source:
+1. **Get the plugin files.** Download **`uru-v<version>.zip`** from the **Assets** section of the [latest release](../../releases/latest) — ⚠️ **not** the "Source code (zip)" link, which doesn't include the built `main.js` and will fail to load. (Or build from source:)
    ```bash
    git clone https://github.com/Arsenije/Uru.git
    cd Uru
@@ -49,9 +49,11 @@ INPUTS YOU NEED FROM THE USER:
 STEP 1 — get the plugin files. Pick ONE:
 
   Option A — prebuilt release (no Node toolchain needed; prefer this):
-    Download the latest `uru-vX.Y.Z.zip` from
-    https://github.com/Arsenije/Uru/releases and extract it so that
+    Download the latest `uru-vX.Y.Z.zip` ASSET from
+    https://github.com/Arsenije/Uru/releases/latest and extract it so that
     `<VAULT>/.obsidian/plugins/uru/` contains main.js, manifest.json, styles.css.
+    IMPORTANT: use the `uru-*.zip` asset, NOT GitHub's "Source code (zip)" — the
+    source archive has no built main.js, so the plugin will fail to load.
 
   Option B — build from source (requires Node.js 18+):
     git clone https://github.com/Arsenije/Uru.git
