@@ -307,6 +307,18 @@ export default class UruPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Set the Deep/Quick indexing mode (Deep = full knowledge-graph extraction).
+	 * The sidecar reads this once at start, so if the running backend differs we
+	 * restart it to pick up the new mode before any (re)index. No-op if unchanged.
+	 */
+	async applyIndexingMode(deep: boolean): Promise<void> {
+		if (this.settings.extractEntities === deep) return;
+		this.settings.extractEntities = deep;
+		await this.saveSettings();
+		await this.restartBackend();
+	}
+
 	private async openRecall(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(URU_RECALL_VIEW);
 		let leaf: WorkspaceLeaf;

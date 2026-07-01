@@ -19,6 +19,8 @@ export class ChatView extends ItemView {
 	private progressFill: HTMLElement | null = null;
 	private progressLabel: HTMLElement | null = null;
 	private lastStatus: IndexStatus | null = null;
+	/** First-run Deep/Quick pick; null until chosen (falls back to the setting). */
+	private chosenDeep: boolean | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -142,16 +144,73 @@ export class ChatView extends ItemView {
 		if (status !== null || this.plugin.isIndexing()) {
 			this.renderProgress(action, status);
 		} else {
+			this.renderModeChoice(action);
 			const btn = action.createEl("button", { cls: "mod-cta uru-empty-btn", text: "Index my vault" });
-			btn.addEventListener("click", () => {
+			btn.addEventListener("click", async () => {
 				if (!this.plugin.backendReady()) {
 					new Notice("Uru is still starting — one moment…");
 					return;
 				}
+				const deep = this.chosenDeep ?? this.plugin.settings.extractEntities;
 				this.renderProgress(action, null); // button → bar immediately
-				void this.plugin.reindex(false);
+				try {
+					// Apply the pick first (restarts the backend only if it differs),
+					// so the very first index runs in the chosen mode.
+					await this.plugin.applyIndexingMode(deep);
+					void this.plugin.reindex(false);
+				} catch (e) {
+					new Notice(`Uru: ${(e as Error).message}`);
+					this.renderEmptyState(null); // restore the chooser + button
+				}
 			});
 		}
+	}
+
+	/** Deep vs Quick chooser for first-timers — mirrors the setup dialog's copy. */
+	private renderModeChoice(parent: HTMLElement): void {
+		const selected = this.chosenDeep ?? this.plugin.settings.extractEntities;
+		this.chosenDeep = selected;
+		const opts = [
+			{
+				deep: false,
+				label: "Quick",
+				desc: "Find notes by meaning, not just keywords. Fast to set up.",
+			},
+			{
+				deep: true,
+				label: "Deep",
+				desc:
+					"Everything Quick does, plus a map of the people, places, and ideas across " +
+					"your notes and how they connect. More powerful, but slower to build " +
+					"(~5–30 seconds per note the first time).",
+			},
+		];
+		const wrap = parent.createDiv({ cls: "uru-choice" });
+		const cards: HTMLElement[] = [];
+		for (const o of opts) {
+			const card = wrap.createDiv({ cls: "uru-choice-opt" });
+			const radio = card.createEl("input", {
+				attr: { type: "radio", name: "uru-mode" },
+			}) as HTMLInputElement;
+			const text = card.createDiv();
+			text.createDiv({ cls: "uru-choice-label", text: o.label });
+			text.createDiv({ cls: "uru-choice-desc", text: o.desc });
+			card.addEventListener("click", () => {
+				this.chosenDeep = o.deep;
+				cards.forEach((c, i) => {
+					const on = opts[i].deep === o.deep;
+					c.toggleClass("is-selected", on);
+					(c.querySelector("input") as HTMLInputElement).checked = on;
+				});
+			});
+			radio.checked = o.deep === selected;
+			card.toggleClass("is-selected", o.deep === selected);
+			cards.push(card);
+		}
+		parent.createEl("p", {
+			cls: "uru-choice-note",
+			text: "You can switch anytime in Uru's settings.",
+		});
 	}
 
 	private renderProgress(parent: HTMLElement, status: IndexStatus | null): void {
