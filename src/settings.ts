@@ -1,6 +1,7 @@
 import { App, ButtonComponent, PluginSettingTab, Setting, Notice } from "obsidian";
 import type { default as UruPlugin, DeleteScope } from "../main";
 import { etaSeconds, formatEta, type IndexStatus } from "./indexing/indexer";
+import type { LinkStatus } from "./graph/linker";
 import { ConfirmModal } from "./views/confirmModal";
 import type { VaultRegistryEntry } from "./vaultRegistry";
 
@@ -59,6 +60,8 @@ export const DEFAULT_SETTINGS: UruSettings = {
 export class UruSettingTab extends PluginSettingTab {
 	/** Removes the index-progress subscription while the tab is open. */
 	private unsubscribe: (() => void) | null = null;
+	/** Removes the graph-link-progress subscription while the tab is open. */
+	private unsubscribeLink: (() => void) | null = null;
 
 	constructor(
 		app: App,
@@ -72,6 +75,8 @@ export class UruSettingTab extends PluginSettingTab {
 		// Drop any subscription left from a previous render before rebuilding.
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.unsubscribeLink?.();
+		this.unsubscribeLink = null;
 		containerEl.empty();
 		const s = this.plugin.settings;
 
@@ -191,6 +196,104 @@ export class UruSettingTab extends PluginSettingTab {
 				}),
 			);
 
+		// ---- Graph (link notes for Obsidian's graph view) ------------------
+		new Setting(containerEl).setName("Graph").setHeading();
+
+		let linkBtn!: ButtonComponent;
+		let linkStopBtn!: ButtonComponent;
+		new Setting(containerEl)
+			.setName("Link notes in the graph")
+			.setDesc(
+				"Adds “related note” links into each note's properties so connections show " +
+					"up in Obsidian's Graph view. Based on meaning and shared terms — no AI model, " +
+					"runs in seconds.",
+			)
+			.addButton((b) => {
+				linkBtn = b
+					.setCta()
+					.setButtonText("Link notes")
+					.setTooltip("Compute related notes and write them into each note's properties")
+					.onClick(() => this.confirmLink());
+			})
+			.addButton((b) => {
+				linkStopBtn = b
+					.setWarning()
+					.setButtonText("Stop")
+					.setTooltip("Stop after the current note finishes")
+					.onClick(() => {
+						this.plugin.stopLinking();
+						new Notice("Uru: stopping after the current note…");
+					});
+			});
+
+		const linkWarn = containerEl.createDiv("uru-index-progress-hint");
+		linkWarn.setText(
+			"⚠ This changes your notes — it adds a “uru-links” property. Your note " +
+				"text isn't touched, and you can undo it any time with “Remove Uru links”.",
+		);
+
+		const linkProgress = containerEl.createDiv("uru-index-progress");
+		const linkFill = linkProgress
+			.createDiv("uru-index-progress-track")
+			.createDiv("uru-index-progress-fill");
+		const linkMeta = linkProgress.createDiv("uru-index-progress-meta");
+		const linkCount = linkMeta.createSpan();
+		const linkCurrent = linkMeta.createSpan({ cls: "uru-index-progress-current" });
+
+		let removeBtn!: ButtonComponent;
+		const removeCard = new Setting(containerEl)
+			.setName("Remove Uru links")
+			.setDesc(this.graphSummary())
+			.addButton((b) => {
+				removeBtn = b
+					.setWarning()
+					.setButtonText("Remove links")
+					.setTooltip("Strip the uru-links property from every note")
+					.onClick(() => this.confirmUnlink());
+			});
+
+		// Button enablement is derived from live plugin state (never a stale render-time
+		// snapshot): disabled only while a link/unlink pass or an index run is active.
+		// Refreshed on both link- and index-status ticks so it re-enables the moment an
+		// index finishes. Clicking before the backend is ready is handled by linkGraph()
+		// with a notice, so there's no readiness gate to get stuck.
+		const refreshLinkButtons = () => {
+			const busy = this.plugin.isLinking() || this.plugin.isIndexing();
+			linkBtn.setDisabled(busy);
+			removeBtn.setDisabled(busy || this.plugin.graphLinkedCount() === 0);
+		};
+		const applyLink = (status: LinkStatus | null) => {
+			const active = status !== null;
+			linkStopBtn.buttonEl.toggle(active);
+			linkProgress.toggle(active);
+			linkWarn.toggle(!active);
+			if (status) {
+				const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
+				linkFill.style.width = `${pct}%`;
+				if (status.phase === "compute") {
+					linkCount.setText(`Analyzing notes… ${status.done.toLocaleString()} / ${status.total.toLocaleString()}`);
+					linkCurrent.setText("");
+				} else {
+					const verb = status.phase === "remove" ? "Removing links" : "Writing links";
+					const eta = etaSeconds(status);
+					const etaTxt = eta !== null ? ` · ${formatEta(eta)}` : "";
+					linkCount.setText(
+						`${verb}: ${status.done.toLocaleString()} / ${status.total.toLocaleString()} · ${pct}%${etaTxt}`,
+					);
+					linkCurrent.setText(status.current);
+				}
+			} else {
+				removeCard.setDesc(this.graphSummary());
+			}
+			refreshLinkButtons();
+		};
+		const offLink = this.plugin.onLinkStatus(applyLink);
+		const offIndex = this.plugin.onIndexStatus(() => refreshLinkButtons());
+		this.unsubscribeLink = () => {
+			offLink();
+			offIndex();
+		};
+
 		// ---- Advanced (collapsed) ------------------------------------------
 		const advanced = containerEl.createEl("details", { cls: "uru-advanced" });
 		advanced.createEl("summary", { text: "Advanced" });
@@ -281,6 +384,52 @@ export class UruSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.unsubscribeLink?.();
+		this.unsubscribeLink = null;
+	}
+
+	/** One-line summary of graph-link state for the "Remove Uru links" row. */
+	private graphSummary(): string {
+		const n = this.plugin.graphLinkedCount();
+		if (n === 0) return "No Uru links yet — use “Link notes” above to add them.";
+		const at = this.plugin.graphLastLinkedAt();
+		const notes = `${n.toLocaleString()} ${n === 1 ? "note" : "notes"} linked`;
+		return at ? `${notes} · last linked ${new Date(at).toLocaleString()}.` : `${notes}.`;
+	}
+
+	/** Confirm (change operation), then compute + write links, then refresh the tab. */
+	private confirmLink(): void {
+		new ConfirmModal(this.app, {
+			title: "Link notes in the graph?",
+			message: [
+				"Uru will add a “uru-links” property to your notes, connecting each to its most " +
+					"related notes so they show up in Obsidian's Graph view.",
+				"This changes your notes' properties (frontmatter) — your note text is not touched.",
+				"You can undo this at any time with “Remove Uru links”.",
+			],
+			confirmText: "Link notes",
+			onConfirm: async () => {
+				await this.plugin.linkGraph();
+				this.display();
+			},
+		}).open();
+	}
+
+	/** Confirm, then strip every uru-links property, then refresh the tab. */
+	private confirmUnlink(): void {
+		new ConfirmModal(this.app, {
+			title: "Remove all Uru links?",
+			message: [
+				"This removes the “uru-links” property from every note Uru added it to, so the " +
+					"links disappear from the Graph view.",
+				"Your note text and any other properties are not affected.",
+			],
+			confirmText: "Remove links",
+			onConfirm: async () => {
+				await this.plugin.unlinkGraph();
+				this.display();
+			},
+		}).open();
 	}
 
 	/** Plain-language backend status — no raw namespace UUID (kept in diagnostics). */

@@ -15,6 +15,7 @@ import { runtimeDir, vaultDataDir } from "./src/paths";
 import { SidecarManager } from "./src/sidecar/manager";
 import type { SidecarClient, HealthResponse } from "./src/sidecar/client";
 import { Indexer, type IndexStatus } from "./src/indexing/indexer";
+import { GraphLinker, type LinkStatus } from "./src/graph/linker";
 import { RecallView, URU_RECALL_VIEW } from "./src/views/recallView";
 import { ChatView, URU_CHAT_VIEW } from "./src/views/chatView";
 import { SetupModal } from "./src/views/setupModal";
@@ -27,6 +28,9 @@ export default class UruPlugin extends Plugin {
 	settings!: UruSettings;
 	private manager: SidecarManager | null = null;
 	private indexer: Indexer | null = null;
+	private linker: GraphLinker | null = null;
+	private linkStatus: LinkStatus | null = null;
+	private linkStatusListeners = new Set<(s: LinkStatus | null) => void>();
 	private status: HealthResponse["status"] | "uninstalled" = "uninstalled";
 	private statusDetail = "";
 	private indexStatus: IndexStatus | null = null;
@@ -187,6 +191,7 @@ export default class UruPlugin extends Plugin {
 			this.manager = null;
 		}
 		this.indexer = null;
+		this.linker = null;
 		try {
 			rmSync(vaultDataDir(this.settings.vaultKey), { recursive: true, force: true });
 			removeVault(this.settings.vaultKey);
@@ -279,6 +284,14 @@ export default class UruPlugin extends Plugin {
 		);
 		await this.indexer.load();
 		this.indexer.registerVaultEvents((off) => this.eventOffs.push(off));
+		this.linker = new GraphLinker(
+			this.app,
+			() => this.client(),
+			this.settings,
+			join(vaultDir, "graph-links.json"),
+			(s) => this.setLinkStatus(s),
+		);
+		this.linker.load();
 		if (this.settings.autoIndexOnStartup) {
 			void this.reindex(false); // auto-index resumes and clears the flag itself
 		} else if (this.settings.indexInterrupted) {
@@ -340,6 +353,68 @@ export default class UruPlugin extends Plugin {
 	/** Ask the running full index to stop after the current note. */
 	stopIndexing(): void {
 		this.indexer?.stop();
+	}
+
+	// ---- graph linking ---------------------------------------------------
+
+	/** True while a link/unlink pass is running. */
+	isLinking(): boolean {
+		return this.linker?.isRunning ?? false;
+	}
+
+	/** Notes currently carrying Uru links (from the ledger). */
+	graphLinkedCount(): number {
+		return this.linker?.linkedCount() ?? 0;
+	}
+
+	/** Epoch ms of the last completed link pass, or null. */
+	graphLastLinkedAt(): number | null {
+		return this.linker?.lastLinkedAt() ?? null;
+	}
+
+	/** Subscribe to link-status changes; fires immediately with the current status. */
+	onLinkStatus(cb: (s: LinkStatus | null) => void): () => void {
+		this.linkStatusListeners.add(cb);
+		cb(this.linkStatus);
+		return () => this.linkStatusListeners.delete(cb);
+	}
+
+	stopLinking(): void {
+		this.linker?.stop();
+	}
+
+	/** Compute + write related-note links into note frontmatter (a change operation). */
+	async linkGraph(): Promise<void> {
+		if (!this.linker || !this.backendReady()) {
+			new Notice("Uru isn't ready yet — one moment…");
+			return;
+		}
+		if (this.isIndexing()) {
+			new Notice("Uru: finish indexing first, then link the graph.");
+			return;
+		}
+		if (this.isLinking()) {
+			new Notice("Uru is already working on the graph");
+			return;
+		}
+		await this.linker.link();
+	}
+
+	/** Remove every Uru link from the vault's frontmatter (undo). */
+	async unlinkGraph(): Promise<void> {
+		if (!this.linker) {
+			new Notice("Uru isn't ready yet — one moment…");
+			return;
+		}
+		if (this.isIndexing()) {
+			new Notice("Uru: finish indexing first.");
+			return;
+		}
+		if (this.isLinking()) {
+			new Notice("Uru is already working on the graph");
+			return;
+		}
+		await this.linker.unlink();
 	}
 
 	async runSetup(): Promise<void> {
@@ -456,11 +531,24 @@ export default class UruPlugin extends Plugin {
 		for (const cb of this.indexStatusListeners) cb(s);
 	}
 
+	private setLinkStatus(s: LinkStatus | null): void {
+		this.linkStatus = s;
+		this.renderStatusBar();
+		for (const cb of this.linkStatusListeners) cb(s);
+	}
+
 	private renderStatusBar(): void {
 		if (this.indexStatus) {
 			const { done, total, current } = this.indexStatus;
 			this.statusBar.setText(`Uru ⏳ ${done}/${total}`);
 			this.statusBar.title = `Uru: indexing ${current}\n(run "Uru: Stop indexing" to cancel)`;
+			return;
+		}
+		if (this.linkStatus) {
+			const { phase, done, total } = this.linkStatus;
+			const verb = phase === "remove" ? "removing links" : "linking";
+			this.statusBar.setText(`Uru 🔗 ${done}/${total}`);
+			this.statusBar.title = `Uru: ${verb}`;
 			return;
 		}
 		const icon = this.status === "ok" ? "✓" : this.status === "error" ? "✕" : "…";

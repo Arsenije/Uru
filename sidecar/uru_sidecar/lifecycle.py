@@ -335,6 +335,31 @@ class SidecarRuntime:
             on_progress=on_progress,
         )
 
+    async def compute_links(
+        self, documents: list[dict], *,
+        k: int | None = None, min_cos: float | None = None, min_bm25: float | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> dict:
+        """Suggest related-note links (semantic + lexical) for the corpus.
+
+        Runs the LLM-free linker against the local embed server. Purely additive:
+        it reads note text only, never touches khora's graph or the vault — the
+        plugin decides whether/how to write the returned links as frontmatter.
+        """
+        from . import linking
+
+        if self._embed is None:
+            raise RuntimeError("embed server not started")
+        embed_base = self._embed.base_url
+        kwargs: dict[str, Any] = {"on_progress": on_progress}
+        if k is not None:
+            kwargs["k"] = k
+        if min_cos is not None:
+            kwargs["min_cos"] = min_cos
+        if min_bm25 is not None:
+            kwargs["min_bm25"] = min_bm25
+        return await asyncio.to_thread(linking.compute_links, documents, embed_base, **kwargs)
+
     # ---- chat (RAG) ------------------------------------------------------
 
     _CHAT_SYSTEM = (

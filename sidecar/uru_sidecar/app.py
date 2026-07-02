@@ -16,7 +16,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from .lifecycle import SidecarRuntime
-from .models import BatchRequest, ChatRequest, ForgetRequest, RecallRequest, RememberRequest
+from .models import (
+    BatchRequest,
+    ChatRequest,
+    ForgetRequest,
+    LinkRequest,
+    RecallRequest,
+    RememberRequest,
+)
 from .serialize import batch_to_dict, recall_to_dict, remember_to_dict
 
 log = logging.getLogger("uru.sidecar")
@@ -119,6 +126,50 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
                 await queue.put({"event": "done", **batch_to_dict(result)})
             except Exception as exc:  # noqa: BLE001 — surface to the client
                 log.exception("index/full failed")
+                await queue.put({"event": "error", "message": str(exc)})
+            finally:
+                await queue.put(None)
+
+        async def stream():
+            task = asyncio.create_task(run())
+            try:
+                while True:
+                    item = await queue.get()
+                    if item is None:
+                        break
+                    yield json.dumps(item) + "\n"
+            finally:
+                if not task.done():
+                    task.cancel()
+
+        return StreamingResponse(stream(), media_type="application/x-ndjson")
+
+    @app.post("/graph/links", dependencies=[Depends(require_auth)])
+    async def graph_links(req: LinkRequest) -> StreamingResponse:
+        """Compute related-note links (semantic + lexical), streaming NDJSON.
+
+        Emits {"event":"progress",...} while embedding, then a single
+        {"event":"done","links":{...},"stats":{...}}. Read-only: computes
+        suggestions from note text; the plugin writes them as frontmatter.
+        """
+        docs = [{"external_id": d.external_id, "content": d.content} for d in req.documents]
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def on_progress(completed: int, total: int) -> None:
+            loop.call_soon_threadsafe(
+                queue.put_nowait, {"event": "progress", "completed": completed, "total": total}
+            )
+
+        async def run() -> None:
+            try:
+                result = await runtime.compute_links(
+                    docs, k=req.k, min_cos=req.min_cos, min_bm25=req.min_bm25,
+                    on_progress=on_progress,
+                )
+                await queue.put({"event": "done", **result})
+            except Exception as exc:  # noqa: BLE001 — surface to the client
+                log.exception("graph/links failed")
                 await queue.put({"event": "error", "message": str(exc)})
             finally:
                 await queue.put(None)
