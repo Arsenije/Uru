@@ -1,6 +1,8 @@
 import { App, ButtonComponent, PluginSettingTab, Setting, Notice } from "obsidian";
-import type UruPlugin from "../main";
+import type { default as UruPlugin, DeleteScope } from "../main";
 import { etaSeconds, formatEta, type IndexStatus } from "./indexing/indexer";
+import { ConfirmModal } from "./views/confirmModal";
+import type { VaultRegistryEntry } from "./vaultRegistry";
 
 export interface UruSettings {
 	/** Set after bootstrap: interpreter inside the uv venv. */
@@ -238,6 +240,42 @@ export class UruSettingTab extends PluginSettingTab {
 					"Changing this needs a full re-index.",
 			)
 			.setDisabled(true);
+
+		// ---- Danger zone (collapsed) ----------------------------------------
+		const danger = containerEl.createEl("details", { cls: "uru-advanced uru-danger" });
+		danger.createEl("summary", { text: "Danger zone" });
+
+		if (!s.vaultKey) {
+			new Setting(danger).setName("Nothing to clean up yet").setDesc("Run setup first.");
+		} else {
+			new Setting(danger)
+				.setName("Reset this vault's Uru data")
+				.setDesc(
+					"Deletes this vault's index and database. The shared backend " +
+						"(Python environment, models) is kept.",
+				)
+				.addButton((b) =>
+					b
+						.setWarning()
+						.setButtonText("Reset")
+						.onClick(() => void this.confirmDelete("vault-only")),
+				);
+
+			let removeAllBtn!: ButtonComponent;
+			const removeAllSetting = new Setting(danger)
+				.setName("Remove Uru completely")
+				.setDesc("Checking other vaults…")
+				.addButton((b) => {
+					removeAllBtn = b
+						.setWarning()
+						.setButtonText("Remove everything")
+						.onClick(() => void this.confirmDelete("vault-and-runtime"));
+				});
+			void this.plugin.deleteDataPreflight().then(({ otherVaults }) => {
+				removeAllSetting.setDesc(this.removeAllDesc(otherVaults));
+				removeAllBtn.setDisabled(Array.isArray(otherVaults) && otherVaults.length > 0);
+			});
+		}
 	}
 
 	hide(): void {
@@ -290,5 +328,54 @@ export class UruSettingTab extends PluginSettingTab {
 					"working; indexing continues in the background."
 			: "This can take a while on large vaults. You can close this window and keep working; " +
 					"indexing continues in the background.";
+	}
+
+	/** Description for the "Remove Uru completely" row, based on registry lookup. */
+	private removeAllDesc(otherVaults: VaultRegistryEntry[] | "unknown"): string {
+		if (otherVaults === "unknown") {
+			return "Uru couldn't confirm whether other vaults still use this — the confirm " +
+				"dialog will ask you to double-check.";
+		}
+		if (otherVaults.length > 0) {
+			const names = otherVaults.map((v) => v.vaultName).join(", ");
+			return `Unavailable — Uru is also used in: ${names}. Use "Reset this vault's Uru data" ` +
+				"instead, then remove the plugin from just this vault.";
+		}
+		return "Deletes the shared backend (Python environment + AI models, several GB) plus " +
+			"this vault's data. Do this before removing the plugin from Community plugins.";
+	}
+
+	/** Confirm, then run the scoped delete and refresh the tab. */
+	private async confirmDelete(scope: DeleteScope): Promise<void> {
+		let message: string[];
+		if (scope === "vault-only") {
+			message = [
+				"This deletes this vault's index and database.",
+				"The shared backend (Python environment, models) is kept.",
+			];
+		} else {
+			const { otherVaults } = await this.plugin.deleteDataPreflight();
+			message =
+				otherVaults === "unknown"
+					? [
+							"Uru couldn't confirm whether any other vault still uses the shared backend.",
+							"Only continue if you're sure no other vault has Uru installed.",
+							"This deletes the shared Python environment and AI models (several GB) plus this vault's data.",
+						]
+					: [
+							"This deletes the shared backend (Python environment + AI models, several GB) " +
+								"plus this vault's data.",
+							"After this finishes, it's safe to remove the Uru plugin from Community plugins.",
+						];
+		}
+		new ConfirmModal(this.app, {
+			title: scope === "vault-only" ? "Reset this vault's Uru data?" : "Remove Uru completely?",
+			message,
+			confirmText: scope === "vault-only" ? "Reset this vault" : "Delete everything",
+			onConfirm: async () => {
+				await this.plugin.deleteData(scope);
+				this.display();
+			},
+		}).open();
 	}
 }
