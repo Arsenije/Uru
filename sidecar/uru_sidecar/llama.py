@@ -67,7 +67,20 @@ class LlamaServer:
             "--alias", self.alias,
         ]
         if self.embedding:
-            args += ["--embeddings", "--pooling", "mean"]
+            # bge-m3 is trained with [CLS]-token pooling for its dense embedding,
+            # not mean pooling — using mean here would silently degrade retrieval
+            # quality without erroring.
+            #
+            # --ubatch-size matters more than the model's own context limit: llama-server
+            # processes an embedding request's whole input in one non-causal physical
+            # batch (unlike causal chat prefill, which it can chunk across micro-batches
+            # transparently), and defaults --ubatch-size to 512 regardless of --ctx-size.
+            # Without raising it here, any chunk over ~512 tokens is rejected outright —
+            # this bit even bge-m3 (trained for 8192 tokens) until it was added.
+            args += [
+                "--embeddings", "--pooling", "cls",
+                "--ubatch-size", str(self.n_ctx),
+            ]
         return args
 
     def start(self) -> None:

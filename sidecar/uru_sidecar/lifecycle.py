@@ -11,12 +11,19 @@ import asyncio
 import logging
 import os
 import time
+from collections import deque
 from typing import Any, Callable
 
 from .config import SidecarConfig
 from .llama import LlamaServer, free_port
+from .proxy import ChatCallStat
 
 log = logging.getLogger("uru.sidecar")
+
+# Chat calls (extraction or RAG-chat) slower than this are logged even if they
+# eventually finished cleanly — a normal single-chunk extraction is seconds,
+# not minutes.
+_SLOW_CALL_THRESHOLD_S = 60.0
 
 
 class SidecarRuntime:
@@ -32,6 +39,13 @@ class SidecarRuntime:
         self._embed: LlamaServer | None = None
         self._proxy_server: Any = None
         self._proxy_task: asyncio.Task | None = None
+        # Rolling window of recent chat-completion calls (extraction + RAG chat),
+        # so /health can answer "how long is this taking, and is it looping"
+        # without anyone having to grep llama-server's raw log by hand.
+        self._llm_calls: deque[ChatCallStat] = deque(maxlen=50)
+        # khora ExpertiseConfig (the extraction ontology) — built in start()
+        # once khora is importable. See uru_sidecar/ontology.py.
+        self._expertise: Any = None
 
     # ---- lifecycle -------------------------------------------------------
 
@@ -70,6 +84,63 @@ class SidecarRuntime:
         except Exception:  # noqa: BLE001 — best-effort; extraction still works (looser)
             log.warning("could not enable json_schema extraction mode")
 
+        # Build our extraction ontology (ExpertiseConfig) and drive khora with it.
+        # The primary/main extraction path reads expertise.system_prompt +
+        # expertise.extraction_prompt directly. But khora's SECOND-PASS relationship
+        # extraction hardcodes its module-level DEFAULT_SYSTEM_PROMPT instead of
+        # reading expertise — so we also monkeypatch that global to the same shared
+        # prompt, giving both paths the 3B-tuned guidance (concise, capped output,
+        # no "extract even indirectly / N-to-2N relationships" that sends a small
+        # model into a schema-unbounded, multi-minute runaway). khora reads the
+        # global at call time (not as a bound default), so the patch takes effect.
+        from . import ontology
+
+        try:
+            self._expertise = ontology.build_expertise()
+        except Exception:  # noqa: BLE001 — fall back to plain type lists if khora API shifts
+            log.warning("could not build ExpertiseConfig; using plain entity/relationship type lists")
+        try:
+            import khora.extraction.extractors.llm as _llm
+
+            _llm.DEFAULT_SYSTEM_PROMPT = ontology.SYSTEM_PROMPT
+        except Exception:  # noqa: BLE001 — best-effort; extraction still works (looser)
+            log.warning("could not patch extraction system prompt for the local 3B model")
+
+        # KET-RAG, part 1 — pin selective_extraction to our config value. The env
+        # var KHORA_PIPELINES_SELECTIVE_EXTRACTION does NOT reach the VectorCypher
+        # engine: it calls extract_entities() without passing the flag, so the
+        # function's own default always wins on this path. The engine re-imports
+        # extract_entities lazily inside each method, so replacing the module
+        # attribute with a wrapper that pins the kwarg takes effect on every call.
+        try:
+            import khora.pipelines.tasks.extract as _extract_mod
+
+            _orig_extract_entities = _extract_mod.extract_entities
+            _selective = self.config.selective_extraction
+
+            async def _extract_entities_pinned(*args, **kwargs):  # noqa: ANN
+                kwargs["selective_extraction"] = _selective
+                return await _orig_extract_entities(*args, **kwargs)
+
+            _extract_mod.extract_entities = _extract_entities_pinned
+        except Exception:  # noqa: BLE001 — best-effort; falls back to khora's default (selective on)
+            log.warning("could not pin selective_extraction; khora default (on) will apply")
+
+        # KET-RAG, part 2 — sever the uncapped rule-based co-occurrence edges that
+        # skipped (non-LLM) chunks would otherwise get. extract_lightweight_edges()
+        # does combinations() over every capitalized phrase in a chunk (quadratic,
+        # ~990 edges from one note) and is imported lazily where it's used, so
+        # replacing the module attribute with a no-op stops it while leaving
+        # selective extraction (part 1) fully intact. Skipped chunks stay
+        # vector-searchable; they just add no graph edges/entities.
+        if not self.config.lightweight_cooccurrence_edges:
+            try:
+                import khora.extraction.importance as _importance_mod
+
+                _importance_mod.extract_lightweight_edges = lambda _chunk: []
+            except Exception:  # noqa: BLE001 — best-effort; hairball returns but nothing breaks
+                log.warning("could not disable lightweight co-occurrence edges")
+
         from khora import Khora  # imported after env is set
 
         self._kb = Khora(run_migrations=True)
@@ -86,7 +157,11 @@ class SidecarRuntime:
 
         port = free_port()
         app = FastAPI()
-        app.include_router(build_proxy_router(chat_base, embed_base))
+        app.include_router(build_proxy_router(
+            chat_base, embed_base,
+            on_chat_completion=self._record_llm_call,
+            raw_log_path=self.config.debug_log_path,
+        ))
         self._proxy_server = uvicorn.Server(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         )
@@ -143,6 +218,42 @@ class SidecarRuntime:
     def has_inflight(self) -> bool:
         return self._inflight > 0
 
+    def _record_llm_call(self, stat: ChatCallStat) -> None:
+        """Callback from the proxy: log + retain every chat-completion call's
+        timing and outcome, so /health can report on duration and looping
+        without anyone grepping llama-server's raw log by hand."""
+        self._llm_calls.append(stat)
+        if stat.hit_cap:
+            log.warning(
+                "LLM call ran %.1fs and hit the output-token cap (finish_reason=%s, "
+                "completion_tokens=%s) — likely a runaway/looping generation rather "
+                "than a natural stop. Input started: %r",
+                stat.duration_s, stat.finish_reason, stat.completion_tokens, stat.prompt_preview,
+            )
+        elif stat.duration_s > _SLOW_CALL_THRESHOLD_S:
+            log.warning(
+                "LLM call ran %.1fs (completion_tokens=%s, finish_reason=%s) — "
+                "unusually slow for a single chunk. Input started: %r",
+                stat.duration_s, stat.completion_tokens, stat.finish_reason, stat.prompt_preview,
+            )
+
+    def llm_stats(self) -> dict[str, Any]:
+        calls = list(self._llm_calls)
+        if not calls:
+            return {"calls": 0}
+        durations = [c.duration_s for c in calls]
+        loops = [c for c in calls if c.hit_cap]
+        return {
+            "calls": len(calls),
+            "last_duration_s": round(durations[-1], 1),
+            "avg_duration_s": round(sum(durations) / len(durations), 1),
+            "max_duration_s": round(max(durations), 1),
+            "possible_loops": len(loops),
+            # Preview of what each looping call was extracting from, so a chunk
+            # that hits the cap can be traced back without grepping raw logs.
+            "loop_previews": [c.prompt_preview for c in loops[-5:]],
+        }
+
     # ---- operations ------------------------------------------------------
 
     async def health(self) -> dict[str, Any]:
@@ -166,6 +277,7 @@ class SidecarRuntime:
             "models": {"chat": "uru-chat", "embed": "uru-embed"},
             "inference": {"chat": chat_alive, "embed": embed_alive},
             "khora": kb_health,
+            "llm_stats": self.llm_stats(),
         }
 
     async def run_supervisor(self, interval: float = 5.0) -> None:
@@ -208,6 +320,7 @@ class SidecarRuntime:
             metadata=metadata or {},
             entity_types=cfg.entity_types,
             relationship_types=cfg.relationship_types,
+            expertise=self._expertise,
         )
 
     async def remember_batch(self, documents: list[dict], *,
@@ -218,6 +331,7 @@ class SidecarRuntime:
             namespace=self.namespace_id,
             entity_types=cfg.entity_types,
             relationship_types=cfg.relationship_types,
+            expertise=self._expertise,
             on_progress=on_progress,
         )
 

@@ -27,6 +27,12 @@ log = logging.getLogger("uru.sidecar")
 def main() -> None:
     config = SidecarConfig.from_args()
     runtime = SidecarRuntime(config)
+    # The Obsidian/Electron process that spawned us. We're launched detached (own
+    # process group) so we survive plugin *reloads* — but that also means a
+    # force-quit or crash of Obsidian would orphan us. getppid() flips to 1
+    # (launchd/init) the instant we're reparented, so watching it lets us die
+    # immediately when Obsidian goes away, without relying on its shutdown path.
+    parent_pid = os.getppid()
 
     async def boot() -> None:
         try:
@@ -35,6 +41,23 @@ def main() -> None:
             log.exception("sidecar startup failed")
             runtime.status = "error"
             runtime.error = str(exc)
+
+    async def parent_watchdog() -> None:
+        """Tear down the instant our spawning process (Obsidian) exits.
+
+        Fires on clean quit, force-quit, and crash alike — none of which are
+        guaranteed to run the plugin's onunload/stop path. ~2s detection replaces
+        the up-to-idle_timeout lag before an orphaned backend would self-clean.
+        """
+        if parent_pid <= 1:
+            return  # already orphaned at startup — nothing meaningful to watch
+        while True:
+            await asyncio.sleep(2)
+            if os.getppid() != parent_pid:
+                log.warning("parent %d exited — shutting down backend immediately", parent_pid)
+                await runtime.stop()
+                os.kill(os.getpid(), signal.SIGTERM)
+                return
 
     async def watchdog() -> None:
         timeout = config.idle_timeout
@@ -64,12 +87,14 @@ def main() -> None:
     async def lifespan(app):
         boot_task = asyncio.create_task(boot())
         dog_task = asyncio.create_task(watchdog())
+        parent_task = asyncio.create_task(parent_watchdog())
         sup_task = asyncio.create_task(runtime.run_supervisor())
         try:
             yield
         finally:
             boot_task.cancel()
             dog_task.cancel()
+            parent_task.cancel()
             sup_task.cancel()
             if runtime.status != "stopping":
                 await runtime.stop()
