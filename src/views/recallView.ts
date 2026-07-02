@@ -56,7 +56,7 @@ export class RecallView extends ItemView {
 		if (!query) return;
 		const client = this.plugin.client();
 		if (!client) {
-			new Notice("Uru backend not ready");
+			new Notice("Uru isn't ready yet — one moment…");
 			return;
 		}
 		this.resultsEl.empty();
@@ -75,7 +75,7 @@ export class RecallView extends ItemView {
 
 		if (result.entities.length) {
 			const ent = this.resultsEl.createDiv({ cls: "uru-recall-entities" });
-			ent.createEl("div", { cls: "uru-recall-section", text: "Entities" });
+			ent.createEl("div", { cls: "uru-recall-section", text: "People & topics" });
 			const chips = ent.createDiv({ cls: "uru-recall-chips" });
 			for (const e of result.entities.slice(0, 12)) {
 				chips.createEl("span", {

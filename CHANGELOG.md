@@ -10,8 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **"Danger zone" in Settings** with two scoped cleanup actions — "Reset this vault's Uru data" and "Remove Uru completely" — backed by a small `vaults.json` registry, so cleanup never deletes another vault's index or a shared backend it still needs. This makes it easy to fully clean up (models, Python environment, index) before removing the plugin, since Obsidian's own uninstall only removes the in-vault plugin folder.
 
+### Changed
+- **Consistent plain-language copy across every surface.** Removed the remaining "knowledge graph" / "Lite" / "Full" wording (which clashed with Obsidian's graph view) in favor of the **Quick / Deep** vocabulary and a "maps how your notes connect" framing — in the Recall command, the manifest description, and the README. Softened "backend" out of user-facing error notices (power-user command names stay as-is). Renamed the Recall panel's "Entities" heading to "People & topics".
+
 ### Removed
 - The command-palette-only "Delete all Uru data" command, which wiped every vault's data unconditionally — replaced by the scoped Danger zone actions above.
+
+### Fixed
+- A failed first-run setup (e.g. the local AI service didn't start, so no note was indexed) no longer shows a misleading "Indexing didn't finish — Resume" prompt; it now offers a clean retry.
 
 ## [0.1.6] — 2026-07-01
 

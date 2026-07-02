@@ -48,7 +48,7 @@ export default class UruPlugin extends Plugin {
 
 		this.addCommand({
 			id: "uru-recall",
-			name: "Recall from knowledge graph",
+			name: "Recall from your vault",
 			callback: () => void this.openRecall(),
 		});
 		this.addCommand({
@@ -95,7 +95,7 @@ export default class UruPlugin extends Plugin {
 
 		if (Platform.isMobile) {
 			this.setStatus("error", "desktop only");
-			new Notice("Uru requires desktop (it runs a local Python backend).");
+			new Notice("Uru requires desktop (it runs a local AI model on your computer).");
 			return;
 		}
 
@@ -151,7 +151,7 @@ export default class UruPlugin extends Plugin {
 			await this.runBackend((l) => this.setStatus("starting", l));
 		} catch (e) {
 			this.setStatus("error", (e as Error).message);
-			new Notice(`Uru backend failed: ${(e as Error).message}`);
+			new Notice(`Uru couldn't start: ${(e as Error).message}`);
 		}
 	}
 
@@ -355,7 +355,7 @@ export default class UruPlugin extends Plugin {
 	/** Run a full index. force=true re-sends every note, ignoring the hash gate. */
 	async reindex(force = false): Promise<void> {
 		if (!this.indexer) {
-			new Notice("Uru backend not ready");
+			new Notice("Uru isn't ready yet — one moment…");
 			return;
 		}
 		// A run already owns the interrupted flag and the progress UI — don't let a
@@ -378,11 +378,19 @@ export default class UruPlugin extends Plugin {
 			this.settings.indexInterrupted = false;
 			this.settings.indexRemaining = null;
 		} else {
-			// Stopped or errored — leave the flag set and snapshot what's left.
-			// (Read via a method: setIndexStatus mutates lastIndexRun through the
-			// status callback during the await, which TS's flow analysis can't see.)
+			// Stopped or errored. (Read via a method: setIndexStatus mutates
+			// lastIndexRun through the status callback during the await, which TS's
+			// flow analysis can't see.)
 			const r = this.lastRun();
-			this.settings.indexRemaining = r ? Math.max(0, r.total - r.done) : null;
+			if (r) {
+				// A run actually began — keep the interrupted flag and snapshot what's left.
+				this.settings.indexRemaining = Math.max(0, r.total - r.done);
+			} else {
+				// No note ever started (e.g. the backend was unavailable) — this isn't
+				// a real interruption, so don't leave a misleading "Resume" prompt.
+				this.settings.indexInterrupted = false;
+				this.settings.indexRemaining = null;
+			}
 		}
 		await this.saveSettings();
 		// Re-notify (still idle) so subscribed UI refreshes its summary/labels with
