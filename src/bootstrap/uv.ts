@@ -31,7 +31,7 @@ const KHORA_VERSION = "0.21.0";
 // Bumped whenever the bundled `uru_sidecar` Python changes. The app-data venv is
 // reinstalled when the installed copy differs, so pure-Python sidecar fixes reach
 // existing users (khora alone wouldn't trigger it — its pin rarely moves).
-const SIDECAR_VERSION = "0.2.8";
+const SIDECAR_VERSION = "0.2.9";
 
 // Models. The embedding model fixes the vector dimension.
 // Chat/extraction: Qwen2.5-3B. A 5-model bake-off (3B/7B, Qwen3-8B, Llama-3.1-8B,

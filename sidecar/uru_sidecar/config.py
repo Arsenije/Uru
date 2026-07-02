@@ -144,4 +144,10 @@ class SidecarConfig:
             "KHORA_LLM_MAX_TOKENS": str(self.llm_max_tokens),
             "KHORA_PIPELINES_EXTRACT_ENTITIES": "true" if self.extract_entities else "false",
             "KHORA_PIPELINES_SELECTIVE_EXTRACTION": "true" if self.selective_extraction else "false",
+            # Disable khora's cross-encoder reranking (on by default). Its model,
+            # BAAI/bge-reranker-v2-m3, is NOT among the models we download, so the
+            # stage adds ~1.4s to EVERY recall while doing nothing useful (measured:
+            # recall drops 1.5s → ~11ms with this off). Re-enable only if we also
+            # ship the reranker model and accept the latency.
+            "KHORA_QUERY_ENABLE_RERANKING": "false",
         }
