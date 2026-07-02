@@ -13,3 +13,7 @@ index-state.json
 
 # Release build output
 dist/
+
+# Generated test fixtures (Wikipedia dump extracts, etc. — never commit)
+testfiles/
+enwiki_namespace_0_0.jsonl

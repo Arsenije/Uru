@@ -31,19 +31,28 @@ const KHORA_VERSION = "0.21.0";
 // Bumped whenever the bundled `uru_sidecar` Python changes. The app-data venv is
 // reinstalled when the installed copy differs, so pure-Python sidecar fixes reach
 // existing users (khora alone wouldn't trigger it — its pin rarely moves).
-const SIDECAR_VERSION = "0.2.0";
+const SIDECAR_VERSION = "0.2.8";
 
 // Models. The embedding model fixes the vector dimension.
+// Chat/extraction: Qwen2.5-3B. A 5-model bake-off (3B/7B, Qwen3-8B, Llama-3.1-8B,
+// Gemma-3-1B) found the earlier extraction failures were caused entirely by too
+// low an output-token cap, not the model — with a roomy budget the 3B produces
+// clean JSON on every chunk while indexing 3-4x faster than any 8B (and staying
+// well under the request timeout). The bigger models add only marginally more
+// entities at 3-4x the wall-clock, so the 3B is the right default for a local vault.
 const CHAT_REPO = "bartowski/Qwen2.5-3B-Instruct-GGUF";
 const CHAT_GGUF = "Qwen2.5-3B-Instruct-Q4_K_M.gguf";
 // Revision-pinned so a repo update can't silently swap the weights underneath us
 // (the embedding model also fixes the vector dimension — drift would corrupt it).
 const CHAT_REVISION = "f302c64a2269a69fb27b2f9473b362f5bb8e78d8";
-const EMBED_REPO = "mixedbread-ai/mxbai-embed-large-v1";
-const EMBED_FILE = "gguf/mxbai-embed-large-v1-f16.gguf";
-const EMBED_REVISION = "b33106f585b9ce46904ad7443a3b52b7a63e231c";
+// bge-m3: XLM-RoBERTa-based, 8192-token native context (vs. mxbai's 512) and
+// still 1024-dim, so no DB migration needed when swapping from mxbai. Uses
+// [CLS] pooling, not mean — see the --pooling flag in uru_sidecar/llama.py.
+const EMBED_REPO = "lm-kit/bge-m3-gguf";
+const EMBED_FILE = "bge-m3-Q8_0.gguf";
+const EMBED_REVISION = "9379ce497e8814b200f2dc0d18eb4045426dcb8c";
 const EMBED_CANDIDATES: Array<{ file: string; dim: number }> = [
-	{ file: EMBED_FILE, dim: 1024 }, // mxbai-embed-large-v1
+	{ file: EMBED_FILE, dim: 1024 }, // bge-m3
 	{ file: "nomic-embed-text-v1.5.f16.gguf", dim: 768 }, // dev cache fallback
 ];
 

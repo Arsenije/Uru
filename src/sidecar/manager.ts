@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from "child_process";
+import { type ChildProcess, execFileSync, spawn } from "child_process";
 import { createServer } from "net";
 import { randomUUID } from "crypto";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
@@ -134,16 +134,54 @@ export class SidecarManager {
 		if (pid) SidecarManager.killTree(pid, signal);
 	}
 
-	/** On startup, terminate a leftover sidecar recorded in the lockfile. */
-	private takeOverExisting(): void {
-		if (!existsSync(this.spec.lockPath)) return;
+	/**
+	 * True if `pid` is actually one of our own processes (uru_sidecar or its
+	 * llama-server children), not some unrelated process that happens to reuse
+	 * a PID recorded in a stale lockfile. POSIX-only — Windows' taskkill /T
+	 * walks the real parent/child tree instead of trusting a bare PID match.
+	 */
+	private static looksLikeOurs(pid: number): boolean {
 		try {
-			const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8"));
-			if (typeof pid === "number") SidecarManager.killTree(pid, "SIGKILL");
+			const cmd = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+			return /uru_sidecar|llama-server/.test(cmd);
 		} catch {
-			/* unreadable lock */
+			return false; // no such process — nothing to verify or kill
 		}
-		this.clearLock();
+	}
+
+	/**
+	 * Find any live process still referencing this vault's db path, regardless
+	 * of the lockfile. Backstop for when the lockfile is stale or missing (e.g.
+	 * Obsidian force-quit before the lock could be written or cleared) — without
+	 * this, a leftover sidecar+llama-server tree can coexist indefinitely with a
+	 * fresh one instead of being replaced. POSIX-only (uses pgrep).
+	 */
+	private static findOrphans(dbPath: string): number[] {
+		if (process.platform === "win32") return [];
+		try {
+			const out = execFileSync("pgrep", ["-f", dbPath], { encoding: "utf8" });
+			return out.split("\n").map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
+		} catch {
+			return []; // pgrep exits non-zero when nothing matches
+		}
+	}
+
+	/** On startup, terminate any leftover sidecar (+ llama children) for this vault. */
+	private takeOverExisting(): void {
+		if (existsSync(this.spec.lockPath)) {
+			try {
+				const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8"));
+				if (typeof pid === "number" && (process.platform === "win32" || SidecarManager.looksLikeOurs(pid))) {
+					SidecarManager.killTree(pid, "SIGKILL");
+				}
+			} catch {
+				/* unreadable lock */
+			}
+			this.clearLock();
+		}
+		for (const pid of SidecarManager.findOrphans(this.spec.dbPath)) {
+			SidecarManager.killTree(pid, "SIGKILL");
+		}
 	}
 
 	private startHeartbeat(): void {
@@ -229,14 +267,26 @@ export class SidecarManager {
 	async stop(): Promise<void> {
 		this.stoppedByUs = true;
 		this.stopHeartbeat();
-		if (this.client) await this.client.shutdown();
 		const proc = this.proc;
 		if (proc && proc.exitCode === null) {
 			const exited = new Promise<void>((res) => proc.once("exit", () => res()));
+			// Send the kill signal FIRST and synchronously — don't gate it behind
+			// an HTTP round-trip. requestUrl() has no timeout of its own, so if the
+			// sidecar's event loop is ever wedged (e.g. a long-running extraction),
+			// awaiting /shutdown first could stall long enough that Obsidian's own
+			// quit sequence moves on without ever giving us the chance to send this
+			// signal at all — which is exactly how a detached child gets orphaned.
 			this.killGroup("SIGTERM");
 			const timer = setTimeout(() => this.killGroup("SIGKILL"), 4_000);
+			// Best-effort courtesy so khora gets a clean disconnect if there's time;
+			// client.shutdown() already swallows its own errors, and the sidecar's
+			// lifespan shutdown handler no-ops a second stop() if SIGTERM's already
+			// triggered one.
+			void this.client?.shutdown();
 			await exited;
 			clearTimeout(timer);
+		} else if (this.client) {
+			await this.client.shutdown();
 		}
 		this.proc = null;
 		this.clearLock();

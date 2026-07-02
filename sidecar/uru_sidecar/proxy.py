@@ -10,6 +10,10 @@ evict, so there is no model-reload thrash.
 from __future__ import annotations
 
 import json
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable
 
 import httpx
 from fastapi import APIRouter, Request, Response
@@ -18,9 +22,62 @@ from fastapi.responses import StreamingResponse
 # llama.cpp can be slow on a cold model load + long extraction prompts.
 _TIMEOUT = httpx.Timeout(600.0, connect=10.0)
 
+# finish_reason values meaning "hit the output-token ceiling" rather than a
+# natural stop — the clearest signal a generation didn't converge on its own
+# (matches khora's own _TRUNCATION_FINISH_REASONS check).
+_CAP_FINISH_REASONS = frozenset({"length", "max_tokens"})
 
-def build_proxy_router(chat_base: str, embed_base: str) -> APIRouter:
-    """Return a router exposing /v1/{chat/completions,completions,embeddings,models}."""
+
+@dataclass
+class ChatCallStat:
+    duration_s: float
+    prompt_tokens: int | None
+    completion_tokens: int | None
+    finish_reason: str | None
+    # First ~200 chars of the last user message — enough to spot which note/chunk
+    # a slow or capped call came from without needing to correlate timestamps
+    # against a separate log.
+    prompt_preview: str | None = None
+
+    @property
+    def hit_cap(self) -> bool:
+        return (self.finish_reason or "").lower() in _CAP_FINISH_REASONS
+
+
+def _last_user_message_preview(body: bytes, limit: int = 200) -> str | None:
+    try:
+        messages = json.loads(body).get("messages") or []
+        for msg in reversed(messages):
+            if msg.get("role") == "user" and msg.get("content"):
+                content = str(msg["content"])
+                return content[:limit] + ("…" if len(content) > limit else "")
+    except (json.JSONDecodeError, ValueError, AttributeError, TypeError):
+        pass
+    return None
+
+
+def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
+    try:
+        with path.open("a") as f:
+            f.write(json.dumps(record, default=str) + "\n")
+    except OSError:
+        pass  # best-effort debug aid; never let logging break a real request
+
+
+def build_proxy_router(
+    chat_base: str,
+    embed_base: str,
+    on_chat_completion: Callable[[ChatCallStat], None] | None = None,
+    raw_log_path: Path | None = None,
+) -> APIRouter:
+    """Return a router exposing /v1/{chat/completions,completions,embeddings,models}.
+
+    ``raw_log_path``, if given, gets one JSON line per chat-completion call with
+    the full request + response bodies — for offline debugging of extraction
+    behavior (what prompt went in, what came back, verbatim). Kept separate
+    from ``ChatCallStat``/``on_chat_completion``, which stay small and cheap
+    for the always-on /health rolling window; this is opt-in and unbounded.
+    """
     router = APIRouter()
 
     async def _forward(target: str, body: bytes) -> Response:
@@ -34,6 +91,34 @@ def build_proxy_router(chat_base: str, embed_base: str) -> APIRouter:
             media_type=r.headers.get("content-type", "application/json"),
         )
 
+    def _report_non_streaming(t0: float, req_body: bytes, raw: bytes) -> None:
+        duration = time.perf_counter() - t0
+        try:
+            data = json.loads(raw)
+            usage = data.get("usage") or {}
+            finish_reason = (data.get("choices") or [{}])[0].get("finish_reason")
+        except (json.JSONDecodeError, ValueError, IndexError, AttributeError):
+            data, usage, finish_reason = None, {}, None
+        if raw_log_path is not None:
+            try:
+                request_json: Any = json.loads(req_body)
+            except (json.JSONDecodeError, ValueError):
+                request_json = None
+            _append_jsonl(raw_log_path, {
+                "duration_s": round(duration, 2),
+                "streaming": False,
+                "request": request_json,
+                "response": data,
+            })
+        if on_chat_completion is not None:
+            on_chat_completion(ChatCallStat(
+                duration_s=duration,
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+                finish_reason=finish_reason,
+                prompt_preview=_last_user_message_preview(req_body),
+            ))
+
     @router.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
         body = await request.body()
@@ -43,18 +128,65 @@ def build_proxy_router(chat_base: str, embed_base: str) -> APIRouter:
         except (json.JSONDecodeError, ValueError):
             pass
         target = f"{chat_base}/v1/chat/completions"
+        t0 = time.perf_counter()
         if not streaming:
-            return await _forward(target, body)
+            resp = await _forward(target, body)
+            _report_non_streaming(t0, body, resp.body)
+            return resp
 
-        # Pass the upstream SSE through unbuffered so tokens arrive incrementally.
+        # Pass the upstream SSE through unbuffered so tokens arrive incrementally,
+        # while still watching for the final chunk's finish_reason so streaming
+        # RAG-chat calls get the same loop/duration visibility as extraction calls.
         async def upstream():
-            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                async with client.stream(
-                    "POST", target, content=body,
-                    headers={"content-type": "application/json"},
-                ) as r:
-                    async for chunk in r.aiter_raw():
-                        yield chunk
+            finish_reason: str | None = None
+            content_parts: list[str] = []
+            try:
+                async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                    async with client.stream(
+                        "POST", target, content=body,
+                        headers={"content-type": "application/json"},
+                    ) as r:
+                        buf = b""
+                        async for chunk in r.aiter_raw():
+                            yield chunk
+                            buf += chunk
+                            while b"\n" in buf:
+                                line, buf = buf.split(b"\n", 1)
+                                line = line.strip()
+                                if not line.startswith(b"data: ") or line.endswith(b"[DONE]"):
+                                    continue
+                                try:
+                                    ev = json.loads(line[len(b"data: "):])
+                                    choice = (ev.get("choices") or [{}])[0]
+                                    fr = choice.get("finish_reason")
+                                    if fr:
+                                        finish_reason = fr
+                                    delta = (choice.get("delta") or {}).get("content")
+                                    if delta:
+                                        content_parts.append(delta)
+                                except (json.JSONDecodeError, ValueError, IndexError, AttributeError):
+                                    pass
+            finally:
+                duration = time.perf_counter() - t0
+                if raw_log_path is not None:
+                    try:
+                        request_json: Any = json.loads(body)
+                    except (json.JSONDecodeError, ValueError):
+                        request_json = None
+                    _append_jsonl(raw_log_path, {
+                        "duration_s": round(duration, 2),
+                        "streaming": True,
+                        "request": request_json,
+                        "response": {"content": "".join(content_parts), "finish_reason": finish_reason},
+                    })
+                if on_chat_completion is not None:
+                    on_chat_completion(ChatCallStat(
+                        duration_s=duration,
+                        prompt_tokens=None,
+                        completion_tokens=None,
+                        finish_reason=finish_reason,
+                        prompt_preview=_last_user_message_preview(body),
+                    ))
 
         return StreamingResponse(upstream(), media_type="text/event-stream")
 

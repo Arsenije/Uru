@@ -1,9 +1,11 @@
 # Python env + spike/smoke artifacts
 .venv/
+uv.lock
 .models/
 .spike-work/
 .smoke-work/
 .smoke-mxbai/
+.smoke-bge-m3/
 .idx-test/
 .bigdoc-test/
 .wiki-src/
@@ -12,3 +14,5 @@ __pycache__/
 *.pyc
 .chat-test/
 .llamacpp-test/
+.bench-work/
+.debug-ingest/
