@@ -122,7 +122,22 @@ The backend (the Python environment, models, llama.cpp binary, and the index/dat
 | Windows | `%LOCALAPPDATA%\uru` |
 | Linux | `$XDG_DATA_HOME/uru` (or `~/.local/share/uru`) |
 
-To wipe everything (models, environment, index), run the command **"Uru: Delete all Uru data"**.
+A small `vaults.json` at the root of that folder tracks which vaults are using the shared
+backend, so cleanup never deletes another vault's data out from under it.
+
+**Uninstalling Uru?** It's a two-step process, because Obsidian's plugin remover only deletes
+the plugin's own folder inside your vault — it can't reach outside it:
+
+1. In Obsidian, go to **Settings → Uru → Danger zone → "Remove Uru completely"**. This checks
+   whether any other vault is still using the shared backend and only deletes what's safe —
+   the models, Python environment, and this vault's index.
+2. Then remove the plugin as usual from **Settings → Community plugins**.
+
+If Uru is installed in more than one vault, use **"Reset this vault's Uru data"** instead —
+it clears just this vault's index and leaves the shared backend for the other vault(s).
+
+If you already removed the plugin without doing step 1, see
+[Troubleshooting](#troubleshooting) for how to clean up manually.
 
 ## Hardware
 
@@ -147,7 +162,8 @@ Switching modes re-indexes affected notes automatically on the next **Re-index e
 - **Stuck on "starting" / setup failed** — the setup dialog (and Settings → Uru) has a **Copy diagnostics** button. Paste that when reporting an issue.
 - **`Uru ✕` after it was working** — an inference server may have crashed; Uru restarts it automatically and the badge returns to `Uru ✓`. If it stays red, grab diagnostics.
 - **Indexing is slow** — that's Deep mode running the model on every note. Switch to **Quick** in Settings, or run **"Uru: Stop indexing"** any time.
-- **Start over** — **"Uru: Delete all Uru data"** removes the models, environment, and index; re-enable from Settings → Uru → "Re-run setup".
+- **Start over** — Settings → Uru → Danger zone → **"Reset this vault's Uru data"** clears this vault's index (keeps the shared backend); re-enable from Settings → Uru → "Re-run setup".
+- **I already removed the plugin and now have leftover files** — Uru couldn't run any cleanup code, since the plugin is gone. Manually delete the per-OS folder from the [Privacy](#privacy) table (e.g. `~/Library/Application Support/uru` on macOS). This is only safe if you're not using Uru in any other vault — if you are, open `uru/vaults.json` to see which `uru/vaults/<id>` subfolder belongs to which vault (by name/path), delete only the ones you no longer need, and leave `uru/runtime` alone.
 
 ## Changelog
 
