@@ -155,12 +155,26 @@ class SidecarRuntime:
 
         from .proxy import build_proxy_router
 
+        # TEMP: route chat/completions to real OpenAI when --openai-model is set
+        # (needs OPENAI_API_KEY in env). Embeddings stay local on bge-m3.
+        openai_chat = None
+        if self.config.openai_model:
+            key = os.environ.get("OPENAI_API_KEY")
+            if key:
+                openai_chat = {"base": "https://api.openai.com/v1", "key": key,
+                               "model": self.config.openai_model}
+                log.info("routing chat/completions to OpenAI model %s (embeddings stay local)",
+                         self.config.openai_model)
+            else:
+                log.warning("--openai-model set but OPENAI_API_KEY missing; using local chat model")
+
         port = free_port()
         app = FastAPI()
         app.include_router(build_proxy_router(
             chat_base, embed_base,
             on_chat_completion=self._record_llm_call,
             raw_log_path=self.config.debug_log_path,
+            openai_chat=openai_chat,
         ))
         self._proxy_server = uvicorn.Server(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
