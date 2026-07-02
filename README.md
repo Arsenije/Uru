@@ -166,7 +166,7 @@ khora is a pure-Python library, so the plugin drives it through a small local **
 
 **Default models** (~3 GB total):
 - Chat / extraction: `Qwen2.5-3B-Instruct` (Q4_K_M GGUF)
-- Embeddings: `mxbai-embed-large-v1` (f16 GGUF, 1024-dim — this fixes the vector dimension, so changing it requires a full re-index)
+- Embeddings: `bge-m3` (Q8_0 GGUF, 1024-dim, 8192-token context — the dimension fixes the vector dimension, so changing it requires a full re-index)
 
 <details>
 <summary><b>Build & develop from source</b></summary>

@@ -1,7 +1,7 @@
 """Smoke-test the real sidecar: spawn it, poll /health, remember, recall, shutdown.
 
 Uses the already-cached spike models (Qwen chat + nomic embed @768) just to
-exercise the HTTP plumbing — the production default embed model is mxbai@1024.
+exercise the HTTP plumbing — the production default embed model is bge-m3@1024.
 
 Run:  PYTHONPATH=. .venv/bin/python scripts/smoke_sidecar.py
 """
@@ -17,10 +17,10 @@ import httpx
 
 HERE = Path(__file__).resolve().parent.parent
 MODELS = HERE / ".models"
-WORK = HERE / ".smoke-mxbai"  # fresh DB: mxbai is 1024-dim, not nomic's 768
+WORK = HERE / ".smoke-bge-m3"  # fresh DB: bge-m3 is 1024-dim, not nomic's 768
 TOKEN = "smoke-token"
 PORT = 8719
-EMBED_MODEL = MODELS / "gguf" / "mxbai-embed-large-v1-f16.gguf"
+EMBED_MODEL = MODELS / "bge-m3-Q8_0.gguf"
 EMBED_DIM = "1024"
 LLAMA_SERVER = HERE / ".llamacpp-test" / "llama-b9838" / "llama-server"
 

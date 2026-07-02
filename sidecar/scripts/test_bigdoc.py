@@ -50,7 +50,7 @@ def main() -> int:
             "--port", str(PORT), "--token", TOKEN,
             "--db-path", str(WORK / "uru.db"),
             "--chat-model", str(MODELS / "Qwen2.5-3B-Instruct-Q4_K_M.gguf"),
-            "--embed-model", str(MODELS / "gguf" / "mxbai-embed-large-v1-f16.gguf"),
+            "--embed-model", str(MODELS / "bge-m3-Q8_0.gguf"),
             "--embedding-dimension", "1024",
         ],
         cwd=HERE,
