@@ -69,6 +69,7 @@ def build_proxy_router(
     embed_base: str,
     on_chat_completion: Callable[[ChatCallStat], None] | None = None,
     raw_log_path: Path | None = None,
+    openai_chat: dict[str, str] | None = None,
 ) -> APIRouter:
     """Return a router exposing /v1/{chat/completions,completions,embeddings,models}.
 
@@ -77,19 +78,45 @@ def build_proxy_router(
     behavior (what prompt went in, what came back, verbatim). Kept separate
     from ``ChatCallStat``/``on_chat_completion``, which stay small and cheap
     for the always-on /health rolling window; this is opt-in and unbounded.
+
+    ``openai_chat`` (TEMPORARY testing aid), if given as
+    ``{"base": "https://api.openai.com/v1", "key": "sk-...", "model": "gpt-4o-mini"}``,
+    routes chat/completions (extraction + RAG) to real OpenAI instead of the local
+    chat server — the note model is rewritten to ``model``. Embeddings stay local
+    (bge-m3), so the vector dimension is unchanged. Lets us build an entity graph
+    fast on a cloud model without touching khora's single-base config.
     """
     router = APIRouter()
 
-    async def _forward(target: str, body: bytes) -> Response:
+    async def _forward(target: str, body: bytes, headers: dict[str, str] | None = None) -> Response:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             r = await client.post(
-                target, content=body, headers={"content-type": "application/json"}
+                target, content=body, headers=headers or {"content-type": "application/json"}
             )
         return Response(
             content=r.content,
             status_code=r.status_code,
             media_type=r.headers.get("content-type", "application/json"),
         )
+
+    def _chat_target() -> tuple[str, dict[str, str]]:
+        """Where chat/completions goes + headers: local server, or real OpenAI."""
+        if openai_chat:
+            return (f"{openai_chat['base']}/chat/completions",
+                    {"content-type": "application/json",
+                     "authorization": f"Bearer {openai_chat['key']}"})
+        return f"{chat_base}/v1/chat/completions", {"content-type": "application/json"}
+
+    def _rewrite_model(body: bytes) -> bytes:
+        """When routing to OpenAI, replace the note model name with the real one."""
+        if not openai_chat:
+            return body
+        try:
+            payload = json.loads(body)
+            payload["model"] = openai_chat["model"]
+            return json.dumps(payload).encode()
+        except (json.JSONDecodeError, ValueError):
+            return body
 
     def _report_non_streaming(t0: float, req_body: bytes, raw: bytes) -> None:
         duration = time.perf_counter() - t0
@@ -127,10 +154,11 @@ def build_proxy_router(
             streaming = bool(json.loads(body).get("stream"))
         except (json.JSONDecodeError, ValueError):
             pass
-        target = f"{chat_base}/v1/chat/completions"
+        target, headers = _chat_target()
+        body = _rewrite_model(body)  # no-op unless routing to OpenAI
         t0 = time.perf_counter()
         if not streaming:
-            resp = await _forward(target, body)
+            resp = await _forward(target, body, headers)
             _report_non_streaming(t0, body, resp.body)
             return resp
 
@@ -143,8 +171,7 @@ def build_proxy_router(
             try:
                 async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
                     async with client.stream(
-                        "POST", target, content=body,
-                        headers={"content-type": "application/json"},
+                        "POST", target, content=body, headers=headers,
                     ) as r:
                         buf = b""
                         async for chunk in r.aiter_raw():

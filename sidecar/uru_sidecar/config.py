@@ -78,6 +78,13 @@ class SidecarConfig:
     # when Obsidian is force-quit). 0 disables.
     idle_timeout: int = 120
 
+    # TEMPORARY testing aid. When set (e.g. "gpt-4o-mini"), the proxy routes
+    # chat/completions (extraction + RAG) to real OpenAI using OPENAI_API_KEY
+    # from the environment, instead of the local chat model. Embeddings stay
+    # local on bge-m3 (dimension unchanged). Lets us build an entity graph fast
+    # on a cloud model to iterate on note-linking; not for production/offline use.
+    openai_model: str | None = None
+
     # Debug aid: append every chat-completion request/response to this JSONL
     # file, verbatim. Off by default (unbounded growth) — opt in with
     # --debug-log-path when investigating extraction behavior offline.
@@ -109,6 +116,17 @@ class SidecarConfig:
             "--debug-log-path", type=Path, default=None,
             help="Append every chat-completion request/response to this JSONL file, verbatim.",
         )
+        p.add_argument(
+            "--openai-model", default=None,
+            help="TEMP: route chat/completions to real OpenAI (e.g. gpt-4o-mini) using "
+                 "OPENAI_API_KEY from env; embeddings stay local. For fast graph-building tests.",
+        )
+        p.add_argument(
+            "--llm-concurrency", type=int, default=1,
+            help="Max concurrent extraction LLM calls. Keep 1 for the local single-"
+                 "threaded llama.cpp; raise (e.g. 8) only when --openai-model routes to a "
+                 "cloud model that tolerates parallelism.",
+        )
         ns = p.parse_args(argv)
         return cls(
             port=ns.port,
@@ -123,6 +141,8 @@ class SidecarConfig:
             n_gpu_layers=ns.n_gpu_layers,
             idle_timeout=ns.idle_timeout,
             debug_log_path=ns.debug_log_path,
+            openai_model=ns.openai_model,
+            llm_max_concurrent=ns.llm_concurrency,
         )
 
     def khora_env(self, openai_base: str) -> dict[str, str]:
