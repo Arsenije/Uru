@@ -76,6 +76,19 @@ export interface BatchDocument {
 	metadata?: Record<string, unknown>;
 }
 
+/** One suggested related-note edge from the LLM-free linker. */
+export interface LinkSuggestion {
+	target: string; // external_id (== vault-relative path) of the related note
+	score: number;
+	via: "semantic" | "lexical" | "both";
+}
+
+export interface LinkComputeResult {
+	/** external_id -> its related notes (already thresholded + capped by the sidecar). */
+	links: Record<string, LinkSuggestion[]>;
+	stats: { notes: number; linked: number; edges: number };
+}
+
 export interface ChatCitation {
 	index: number;
 	external_id: string;
@@ -182,6 +195,50 @@ export class SidecarClient {
 	/** Non-streaming chat via requestUrl (fallback when fetch streaming is blocked). */
 	async chatSync(query: string, history: ChatMessage[], note?: NoteContext): Promise<ChatResult> {
 		return this.post<ChatResult>("/chat", { query, history, stream: false, note });
+	}
+
+	/**
+	 * Compute related-note links for the whole corpus (semantic + lexical, no LLM).
+	 * Streams NDJSON progress; resolves with the final link map. Uses fetch for the
+	 * streaming body, same as chatStream and the /index/full path.
+	 */
+	async computeLinks(
+		documents: Array<{ external_id: string; content: string }>,
+		onProgress?: (completed: number, total: number) => void,
+	): Promise<LinkComputeResult> {
+		const resp = await fetch(`${this.baseUrl}/graph/links`, {
+			method: "POST",
+			headers: { "content-type": "application/json", ...this.authHeader },
+			body: JSON.stringify({ documents }),
+		});
+		if (!resp.ok || !resp.body) throw new Error(`graph/links failed: HTTP ${resp.status}`);
+		const reader = resp.body.getReader();
+		const decoder = new TextDecoder();
+		let buf = "";
+		let result: LinkComputeResult | null = null;
+		const handle = (line: string) => {
+			const ev = JSON.parse(line) as
+				| { event: "progress"; completed: number; total: number }
+				| { event: "done"; links: LinkComputeResult["links"]; stats: LinkComputeResult["stats"] }
+				| { event: "error"; message: string };
+			if (ev.event === "progress") onProgress?.(ev.completed, ev.total);
+			else if (ev.event === "done") result = { links: ev.links, stats: ev.stats };
+			else if (ev.event === "error") throw new Error(ev.message);
+		};
+		for (;;) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buf += decoder.decode(value, { stream: true });
+			let nl: number;
+			while ((nl = buf.indexOf("\n")) >= 0) {
+				const line = buf.slice(0, nl).trim();
+				buf = buf.slice(nl + 1);
+				if (line) handle(line);
+			}
+		}
+		if (buf.trim()) handle(buf.trim());
+		if (!result) throw new Error("graph/links: stream ended without a result");
+		return result;
 	}
 
 	async shutdown(): Promise<void> {
