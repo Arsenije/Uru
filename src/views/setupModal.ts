@@ -22,30 +22,10 @@ export class SetupModal extends Modal {
 		contentEl.createEl("h2", { text: "Set up Uru" });
 		contentEl.createEl("p", {
 			text:
-				"Uru adds AI-powered search to your vault, and everything runs on your own " +
-				"computer — nothing goes to the cloud, and there's no account or API key to set up. " +
-				"The first time, Uru downloads about 3 GB (the AI models it needs) and installs a " +
-				"few components. This happens once. Your notes never leave your machine. " +
-				"(Uninstalling later is two steps — clean up from Settings → Uru → Danger zone " +
-				"first, then remove the plugin.)",
+				"Uru adds AI-powered search to your vault — everything runs locally on your " +
+				"computer, with no cloud, no account, and no API key. The first run downloads " +
+				"about 3 GB of AI models and installs a few components, one time only.",
 		});
-
-		let fullKg = this.plugin.settings.extractEntities;
-		new Setting(contentEl)
-			.setName("How much to analyze")
-			.setDesc(
-				'"Quick" finds notes by meaning, not just keywords — fast to set up. ' +
-					'"Deep" does that too, and also maps the people, places, and ideas mentioned ' +
-					"across your notes and how they connect. More powerful, but slower to build " +
-					"(~5–30 seconds per note the first time). You can switch anytime.",
-			)
-			.addDropdown((d) =>
-				d
-					.addOption("lite", "Quick — search by meaning")
-					.addOption("full", "Deep — search + connections (slower)")
-					.setValue(fullKg ? "full" : "lite")
-					.onChange((v) => (fullKg = v === "full")),
-			);
 
 		const logEl = contentEl.createEl("pre", { cls: "uru-setup-log" });
 		logEl.hide();
@@ -62,10 +42,8 @@ export class SetupModal extends Modal {
 				.onClick(async () => {
 					if (this.installing) return;
 					this.installing = true;
-					b.setDisabled(true).setButtonText("Installing…");
+					b.setDisabled(true).setButtonText("Installing… (this can take a few minutes)");
 					logEl.show();
-					this.plugin.settings.extractEntities = fullKg;
-					await this.plugin.saveSettings();
 					try {
 						await this.plugin.runBackend(append);
 						new Notice("Uru is ready.");
