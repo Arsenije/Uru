@@ -284,6 +284,10 @@ export default class UruPlugin extends Plugin {
 		);
 		await this.indexer.load();
 		this.indexer.registerVaultEvents((off) => this.eventOffs.push(off));
+		// A restored chat/recall view subscribes during layout-restore, before the
+		// indexer exists, so its gate saw an indexed count of 0. Now that the store
+		// is loaded, re-emit the current status so those views re-evaluate the gate.
+		this.setIndexStatus(this.indexStatus);
 		this.linker = new GraphLinker(
 			this.app,
 			() => this.client(),
