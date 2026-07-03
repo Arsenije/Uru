@@ -19,7 +19,13 @@ import { GraphLinker, type LinkStatus } from "./src/graph/linker";
 import { RecallView, URU_RECALL_VIEW } from "./src/views/recallView";
 import { ChatView, URU_CHAT_VIEW } from "./src/views/chatView";
 import { SetupModal } from "./src/views/setupModal";
-import { otherActiveVaults, removeVault, touchVault, type VaultRegistryEntry } from "./src/vaultRegistry";
+import {
+	otherActiveVaults,
+	pruneOrphanVaultData,
+	removeVault,
+	touchVault,
+	type VaultRegistryEntry,
+} from "./src/vaultRegistry";
 
 /** What "Danger zone" cleanup removes: just this vault's data, or the shared backend too. */
 export type DeleteScope = "vault-only" | "vault-and-runtime";
@@ -171,9 +177,15 @@ export default class UruPlugin extends Plugin {
 		await this.bootSilent();
 	}
 
+	/** This vault's filesystem path, or undefined on non-file adapters (e.g. mobile). */
+	private currentVaultPath(): string | undefined {
+		const adapter = this.app.vault.adapter;
+		return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : undefined;
+	}
+
 	/** Other vaults still registered as sharing the runtime — never treat "unknown" as safe. */
 	async deleteDataPreflight(): Promise<{ otherVaults: VaultRegistryEntry[] | "unknown" }> {
-		return { otherVaults: otherActiveVaults(this.settings.vaultKey) };
+		return { otherVaults: otherActiveVaults(this.settings.vaultKey, this.currentVaultPath()) };
 	}
 
 	/**
@@ -202,7 +214,7 @@ export default class UruPlugin extends Plugin {
 
 			let deletedRuntime = false;
 			if (scope === "vault-and-runtime") {
-				const others = otherActiveVaults(this.settings.vaultKey);
+				const others = otherActiveVaults(this.settings.vaultKey, this.currentVaultPath());
 				if (others === "unknown" || others.length === 0) {
 					rmSync(runtimeDir(), { recursive: true, force: true });
 					this.settings.installed = false;
@@ -211,6 +223,9 @@ export default class UruPlugin extends Plugin {
 					this.settings.chatModelPath = "";
 					this.settings.embedModelPath = "";
 					deletedRuntime = true;
+					// No vault references the shared runtime anymore — sweep any data dirs
+					// orphaned by past reinstalls so nothing is left behind on disk.
+					pruneOrphanVaultData();
 				} else {
 					new Notice("Uru: another vault started using Uru — kept the shared backend.");
 				}

@@ -8,6 +8,7 @@
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
 		"deploy": "node scripts/install-to-vault.mjs",
 		"install-plugin": "npm run build && node scripts/install-to-vault.mjs",
+		"test": "node scripts/run-tests.mjs",
 		"verify": "node scripts/verify-staging.mjs",
 		"version": "node version-bump.mjs && git add manifest.json versions.json"
 	},

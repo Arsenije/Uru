@@ -21,9 +21,14 @@ export function runtimeDir(): string {
 	return join(appDataDir(), "runtime");
 }
 
+/** Parent of all per-vault data dirs, one subdirectory per vaultKey. */
+export function vaultsDir(): string {
+	return join(appDataDir(), "vaults");
+}
+
 /** Per-vault data: khora db, index-state.json, sidecar lockfile. */
 export function vaultDataDir(vaultKey: string): string {
-	return join(appDataDir(), "vaults", vaultKey);
+	return join(vaultsDir(), vaultKey);
 }
 
 /** Registry of vaults sharing the runtime, so cleanup can tell if it's safe to remove. */
