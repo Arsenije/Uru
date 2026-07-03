@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-07-03
+
 ### Added
 - **"Danger zone" in Settings** with two scoped cleanup actions — "Reset this vault's Uru data" and "Remove Uru completely" — backed by a small `vaults.json` registry, so cleanup never deletes another vault's index or a shared backend it still needs. This makes it easy to fully clean up (models, Python environment, index) before removing the plugin, since Obsidian's own uninstall only removes the in-vault plugin folder.
 
@@ -81,7 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - First public beta: local knowledge-graph + semantic search and RAG chat for Obsidian, fully offline.
 
-[Unreleased]: https://github.com/Arsenije/Uru/compare/v0.1.6...HEAD
+[Unreleased]: https://github.com/Arsenije/Uru/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Arsenije/Uru/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/Arsenije/Uru/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/Arsenije/Uru/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/Arsenije/Uru/compare/v0.1.3...v0.1.4
