@@ -39,6 +39,7 @@ export default class UruPlugin extends Plugin {
 	private linkStatusListeners = new Set<(s: LinkStatus | null) => void>();
 	private status: HealthResponse["status"] | "uninstalled" = "uninstalled";
 	private statusDetail = "";
+	private statusListeners = new Set<(s: typeof this.status) => void>();
 	private indexStatus: IndexStatus | null = null;
 	private lastIndexRun: IndexStatus | null = null;
 	private indexStatusListeners = new Set<(s: IndexStatus | null) => void>();
@@ -169,7 +170,7 @@ export default class UruPlugin extends Plugin {
 		new SetupModal(this.app, this).open();
 	}
 
-	private async restartBackend(): Promise<void> {
+	async restartBackend(): Promise<void> {
 		if (this.manager) {
 			await this.manager.stop();
 			this.manager = null;
@@ -369,6 +370,17 @@ export default class UruPlugin extends Plugin {
 		return () => this.indexStatusListeners.delete(cb);
 	}
 
+	/**
+	 * Subscribe to backend-status changes (uninstalled/starting/ok/error) so views
+	 * can show a loading state while the sidecar boots. Fires immediately with the
+	 * current status, then on every change. Returns an unsubscribe fn.
+	 */
+	onBackendStatus(cb: (s: typeof this.status) => void): () => void {
+		this.statusListeners.add(cb);
+		cb(this.status);
+		return () => this.statusListeners.delete(cb);
+	}
+
 	/** Ask the running full index to stop after the current note. */
 	stopIndexing(): void {
 		this.indexer?.stop();
@@ -536,6 +548,7 @@ export default class UruPlugin extends Plugin {
 		this.status = status;
 		this.statusDetail = detail;
 		this.renderStatusBar();
+		for (const cb of this.statusListeners) cb(status);
 	}
 
 	/** Last live status tick of the current/most-recent run (opaque to flow analysis). */

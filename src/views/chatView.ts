@@ -15,10 +15,13 @@ export class ChatView extends ItemView {
 	private busy = false;
 	private chatScope: ChatScope = "vault";
 	private unsubIndex: (() => void) | null = null;
+	private unsubStatus: (() => void) | null = null;
 	private emptyEl: HTMLElement | null = null;
 	private progressFill: HTMLElement | null = null;
 	private progressLabel: HTMLElement | null = null;
 	private lastStatus: IndexStatus | null = null;
+	/** Which gate box is currently rendered — dedupes rebuilds on repeated boot ticks. */
+	private gateMode: "loading" | "error" | "index" | null = null;
 	/** First-run Deep/Quick pick; null until chosen (falls back to the setting). */
 	private chosenDeep: boolean | null = null;
 
@@ -82,6 +85,9 @@ export class ChatView extends ItemView {
 		// shows an "index your vault" prompt instead of a dead chat box. The
 		// callback fires immediately with the current status on subscribe.
 		this.unsubIndex = this.plugin.onIndexStatus((s) => this.onIndexStatusUpdate(s));
+		// Boot gate: while the backend is coming up (or failed), show a loading/
+		// error state instead of the index prompt. Also fires immediately.
+		this.unsubStatus = this.plugin.onBackendStatus(() => this.refreshGate());
 	}
 
 	focusInput(): void {
@@ -95,6 +101,28 @@ export class ChatView extends ItemView {
 
 	private onIndexStatusUpdate(status: IndexStatus | null): void {
 		this.lastStatus = status;
+		this.refreshGate();
+	}
+
+	/**
+	 * Single coordinator for what the message area shows. Boot state wins over the
+	 * index gate: while the backend isn't fully up (or failed) we show a loading/
+	 * error box; once ready we fall through to the index gate on the last status.
+	 */
+	private refreshGate(): void {
+		if (this.plugin.settings.installed && this.plugin.backendState === "error") {
+			this.renderErrorState(this.plugin.statusDetailText);
+			return;
+		}
+		if (this.plugin.settings.installed && !this.plugin.backendReady()) {
+			this.renderStartingState();
+			return;
+		}
+		this.applyIndexGate(this.lastStatus);
+	}
+
+	private applyIndexGate(status: IndexStatus | null): void {
+		this.gateMode = "index";
 		if (status === null) {
 			// Indexing idle. If the vault now has content, lift the gate;
 			// otherwise (never indexed, or stopped before any note) show the prompt.
@@ -110,20 +138,62 @@ export class ChatView extends ItemView {
 		}
 	}
 
-	private setComposerEnabled(enabled: boolean): void {
+	private setComposerEnabled(
+		enabled: boolean,
+		disabledPlaceholder = "Index your vault to start chatting…",
+	): void {
 		this.input.disabled = !enabled;
 		this.sendBtn.disabled = !enabled;
 		this.input.placeholder = enabled
 			? "Ask your vault… (Enter to send, Shift+Enter for newline)"
-			: "Index your vault to start chatting…";
+			: disabledPlaceholder;
 	}
 
 	/** Remove the empty-state prompt and re-enable the composer. */
 	private clearGate(): void {
+		this.gateMode = null;
 		this.emptyEl?.remove();
 		this.emptyEl = null;
 		this.progressFill = this.progressLabel = null;
 		this.setComposerEnabled(true);
+	}
+
+	/** Backend still booting — show a loading box with an indeterminate bar. */
+	private renderStartingState(): void {
+		if (this.gateMode === "loading") return; // already showing — don't restart the animation
+		this.gateMode = "loading";
+		this.setComposerEnabled(false, "Starting Uru…");
+		this.messagesEl.empty();
+		this.progressFill = this.progressLabel = null;
+		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
+		this.emptyEl = box;
+		box.createEl("div", { cls: "uru-empty-title", text: "Starting Uru…" });
+		box.createEl("p", {
+			cls: "uru-empty-copy",
+			text: "Uru is starting its local AI backend — this can take a moment on first launch.",
+		});
+		const action = box.createDiv({ cls: "uru-empty-action" });
+		this.renderProgress(action, null); // indeterminate "Starting…" bar
+	}
+
+	/** Backend failed to start — show the error and a Retry button. */
+	private renderErrorState(detail: string): void {
+		if (this.gateMode === "error") return;
+		this.gateMode = "error";
+		this.setComposerEnabled(false, "Uru couldn't start");
+		this.messagesEl.empty();
+		this.progressFill = this.progressLabel = null;
+		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
+		this.emptyEl = box;
+		box.createEl("div", { cls: "uru-empty-title", text: "Uru couldn't start" });
+		box.createEl("p", {
+			cls: "uru-empty-copy",
+			text: detail || "The local backend didn't come up. Try again, or check Uru's settings.",
+		});
+		const action = box.createDiv({ cls: "uru-empty-action" });
+		action
+			.createEl("button", { cls: "mod-cta uru-empty-btn", text: "Retry" })
+			.addEventListener("click", () => void this.plugin.restartBackend());
 	}
 
 	/** Show the first-run prompt (copy + button), or a progress bar while indexing. */
@@ -253,7 +323,9 @@ export class ChatView extends ItemView {
 		this.messagesEl.empty();
 		this.emptyEl = null;
 		this.progressFill = this.progressLabel = null;
-		if (this.unindexed) this.renderEmptyState(this.lastStatus);
+		this.gateMode = null;
+		// Re-evaluate: loading/error while booting, index prompt if unindexed, else clear.
+		this.refreshGate();
 	}
 
 	private addBubble(role: "user" | "assistant"): HTMLElement {
@@ -343,6 +415,8 @@ export class ChatView extends ItemView {
 	async onClose(): Promise<void> {
 		this.unsubIndex?.();
 		this.unsubIndex = null;
+		this.unsubStatus?.();
+		this.unsubStatus = null;
 		this.contentEl.empty();
 	}
 }

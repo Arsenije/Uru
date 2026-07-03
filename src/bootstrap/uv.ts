@@ -325,7 +325,7 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 	}
 	if (!models) throw new Error("Model download failed; check diagnostics.");
 
-	log("Backend ready.");
+	log("Setup complete — backend ready.");
 	// uru_sidecar is pip-installed into the venv, so `python -m uru_sidecar`
 	// works from any cwd; runtimeDir is a harmless PYTHONPATH.
 	return { pythonPath: py, sidecarCwd: runtimeDir, llamaServerBin, ...models };

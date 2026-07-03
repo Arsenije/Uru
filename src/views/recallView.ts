@@ -7,6 +7,9 @@ export const URU_RECALL_VIEW = "uru-recall-view";
 export class RecallView extends ItemView {
 	private input!: HTMLInputElement;
 	private resultsEl!: HTMLElement;
+	private unsubStatus: (() => void) | null = null;
+	/** Which boot banner is showing — dedupes rebuilds on repeated boot ticks. */
+	private gateMode: "loading" | "error" | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -42,6 +45,49 @@ export class RecallView extends ItemView {
 		bar.createEl("button", { text: "Recall" }).addEventListener("click", () => void this.run());
 
 		this.resultsEl = root.createDiv({ cls: "uru-recall-results" });
+
+		// Boot gate: while the backend is coming up (or failed), disable the box
+		// and show a loading/error banner. Fires immediately on subscribe.
+		this.unsubStatus = this.plugin.onBackendStatus(() => this.refreshGate());
+	}
+
+	/**
+	 * While the backend isn't fully up (or failed), disable the search box and show
+	 * a boot banner; once ready, re-enable it and clear only the banner (not results).
+	 */
+	private refreshGate(): void {
+		const installed = this.plugin.settings.installed;
+		if (installed && this.plugin.backendState === "error") {
+			if (this.gateMode === "error") return;
+			this.gateMode = "error";
+			this.input.disabled = true;
+			this.input.placeholder = "Uru couldn't start";
+			this.resultsEl.empty();
+			const box = this.resultsEl.createDiv({ cls: "uru-recall-status" });
+			box.setText(
+				this.plugin.statusDetailText ||
+					"The local backend didn't come up. Try again, or check Uru's settings.",
+			);
+			box
+				.createEl("button", { cls: "mod-cta", text: "Retry" })
+				.addEventListener("click", () => void this.plugin.restartBackend());
+			return;
+		}
+		if (installed && !this.plugin.backendReady()) {
+			if (this.gateMode === "loading") return;
+			this.gateMode = "loading";
+			this.input.disabled = true;
+			this.input.placeholder = "Starting Uru…";
+			this.resultsEl.empty();
+			this.resultsEl.createDiv({ cls: "uru-recall-status", text: "Starting Uru…" });
+			return;
+		}
+		// Ready: re-enable the box. Clear the banner if one was showing, but leave
+		// any live results untouched.
+		this.input.disabled = false;
+		this.input.placeholder = "Ask your vault…";
+		if (this.gateMode !== null) this.resultsEl.empty();
+		this.gateMode = null;
 	}
 
 	/** Focus and optionally seed the query box (used by the command). */
@@ -121,6 +167,8 @@ export class RecallView extends ItemView {
 	}
 
 	async onClose(): Promise<void> {
+		this.unsubStatus?.();
+		this.unsubStatus = null;
 		this.contentEl.empty();
 	}
 }
