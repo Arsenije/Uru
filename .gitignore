@@ -17,3 +17,6 @@ dist/
 # Generated test fixtures (Wikipedia dump extracts, etc. — never commit)
 testfiles/
 enwiki_namespace_0_0.jsonl
+
+# Test runner bundle output
+.test-build/

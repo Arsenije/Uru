@@ -22,6 +22,8 @@
 		"**/*.ts"
 	],
 	"exclude": [
-		"khora"
+		"khora",
+		"tests",
+		".test-build"
 	]
 }
