@@ -1,6 +1,6 @@
 {
 	"name": "uru",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"description": "Knowledge graph + vector search for your vault, powered by khora.",
 	"main": "main.js",
 	"scripts": {

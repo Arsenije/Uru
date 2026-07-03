@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-07-03
+
+### Added
+- **Loading state while Uru starts.** Opening Chat or Recall before the local backend is ready now shows a clear "Starting Uru…" state (with a live progress indicator) instead of a dead or misleading input box, and switches to the real chat/search view automatically once the backend is up. If startup fails, both panels show a plain error with a **Retry** button.
+
+### Changed
+- **Simpler first-run setup.** The setup dialog leads with a shorter, privacy-focused intro and no longer asks you to choose Quick vs Deep up front — it defaults to Deep, still changeable anytime in Settings. The install button now spells out that it "can take a few minutes," and the final log line reads "Setup complete — backend ready."
+
 ## [0.1.7] — 2026-07-03
 
 ### Added
