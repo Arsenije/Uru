@@ -26,6 +26,8 @@ It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first search-
 
 **Option A — prebuilt release (no Node needed):** download **`uru-v<version>.zip`** from the **Assets** section of the [latest release](../../releases/latest) — ⚠️ **not** the "Source code (zip)" link, which omits the built `main.js` and fails to load. Extract the whole `uru/` folder into `<your-vault>/.obsidian/plugins/` (the zip already contains `main.js`, `manifest.json`, `styles.css`, and the `sidecar/` backend).
 
+> With the [GitHub CLI](https://cli.github.com), one command grabs the correct asset (no wrong-zip mistakes): `gh release download --repo Arsenije/Uru --pattern 'uru-*.zip'`. The asset is small (~50 KB) — that's expected: the sidecar ships as source-only Python, and its dependencies download on first run.
+
 **Option B — build from source (needs [Node.js](https://nodejs.org) 18+):** one command builds it and copies everything into place:
 ```bash
 git clone https://github.com/Arsenije/Uru.git
@@ -53,11 +55,17 @@ INPUTS YOU NEED FROM THE USER:
 STEP 1 — get the plugin files. Pick ONE:
 
   Option A — prebuilt release (no Node toolchain needed; prefer this):
-    Download the latest `uru-vX.Y.Z.zip` ASSET from
-    https://github.com/Arsenije/Uru/releases/latest and extract it so that
-    `<VAULT>/.obsidian/plugins/uru/` contains main.js, manifest.json, styles.css.
+    With the GitHub CLI (one command, always the right asset):
+      gh release download --repo Arsenije/Uru --pattern 'uru-*.zip'
+      # no tag = newest release. `gh release view --repo Arsenije/Uru` (no tag)
+      # shows the latest; the literal word `latest` is NOT a valid tag argument.
+    Then unzip so `<VAULT>/.obsidian/plugins/uru/` contains main.js, manifest.json,
+    styles.css, and sidecar/. Without gh, download the `uru-vX.Y.Z.zip` ASSET from
+    https://github.com/Arsenije/Uru/releases/latest by hand.
     IMPORTANT: use the `uru-*.zip` asset, NOT GitHub's "Source code (zip)" — the
     source archive has no built main.js, so the plugin will fail to load.
+    NOTE: the `uru-*.zip` is small (~50 KB) — expected, NOT a broken/partial
+    download. The sidecar is source-only Python; its deps install on first run.
 
   Option B — build from source (requires Node.js 18+):
     git clone https://github.com/Arsenije/Uru.git
@@ -66,15 +74,16 @@ STEP 1 — get the plugin files. Pick ONE:
     npm run install-plugin -- "<VAULT>"   # builds AND copies everything (incl. the
                                           # sidecar/ backend) into .obsidian/plugins/uru/
 
-STEP 2 — VERIFY staging (headless; the last thing you can check before the GUI):
-  If you built from source (Option B), run the bundled checker:
-    node scripts/verify-staging.mjs "<VAULT>"     # prints "OK: Uru <version> staged ..."
-  Otherwise (release-zip install) confirm these exist and are non-empty:
-    <VAULT>/.obsidian/plugins/uru/main.js
-    <VAULT>/.obsidian/plugins/uru/manifest.json
-    <VAULT>/.obsidian/plugins/uru/styles.css
-    <VAULT>/.obsidian/plugins/uru/sidecar/pyproject.toml   (backend — must be present)
-  Do NOT hand off until this passes.
+STEP 2 — VERIFY staging (headless; this is as far as you can verify — everything
+  after this is GUI-only and only the user can confirm it):
+  Run the SAME checker for either install path — it prints "OK: Uru <version> staged ...":
+    Option B (source clone):     node scripts/verify-staging.mjs "<VAULT>"
+    Option A (release zip):      node "<VAULT>/.obsidian/plugins/uru/verify-staging.mjs" "<VAULT>"
+    Either, without a local copy: curl -fsSL \
+      https://raw.githubusercontent.com/Arsenije/Uru/main/scripts/verify-staging.mjs \
+      | node - "<VAULT>"
+  The checker confirms main.js, manifest.json, styles.css, and the sidecar/ backend
+  are present and non-empty. Do NOT hand off until it prints "OK:".
 
 STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
   Tell them: "Open Obsidian → Settings → Community plugins → enable 'Uru'.
@@ -102,7 +111,10 @@ DO NOT:
 | Plugin files to deploy | `main.js`, `manifest.json`, `styles.css`, and `sidecar/` (backend) |
 | Deploy target | `<VAULT>/.obsidian/plugins/uru/` |
 | Install from source (build + deploy) | `npm install && npm run install-plugin -- "<VAULT>"` |
-| Headless staging check | `node scripts/verify-staging.mjs "<VAULT>"` |
+| Headless staging check (source clone) | `node scripts/verify-staging.mjs "<VAULT>"` |
+| Headless staging check (release zip) | `node "<VAULT>/.obsidian/plugins/uru/verify-staging.mjs" "<VAULT>"` |
+| Release-asset download (GitHub CLI) | `gh release download --repo Arsenije/Uru --pattern 'uru-*.zip'` |
+| Release-zip size | ~50 KB (source-only sidecar; deps download on first run) |
 | Platforms | macOS, Windows, Linux (desktop only; **no mobile**) |
 | Runtime prerequisites | None — Python 3.13, llama.cpp, and models auto-download on first run |
 | First-run download | ~3 GB (chat model + embedding model + llama.cpp runtime) |

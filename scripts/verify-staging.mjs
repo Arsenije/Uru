@@ -6,7 +6,12 @@
  * opens Obsidian — the one part of the install an assistant can verify without a
  * GUI. Exit 0 + "OK:" on success; exit 1 + "FAIL:" with reasons otherwise.
  *
- *   node scripts/verify-staging.mjs "<path-to-vault>"
+ * Works for BOTH install paths — build-from-source and prebuilt release-zip —
+ * since it only inspects the staged files. It ships inside the release zip too,
+ * so a release-zip install can run it without cloning the repo:
+ *
+ *   node scripts/verify-staging.mjs "<path-to-vault>"                 # from a source clone
+ *   node "<VAULT>/.obsidian/plugins/uru/verify-staging.mjs" "<VAULT>" # from a release-zip install
  *
  * Accepts either the vault root (it appends .obsidian/plugins/uru) or the plugin
  * directory itself.

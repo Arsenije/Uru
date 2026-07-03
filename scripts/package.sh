@@ -12,6 +12,7 @@ OUT="dist/uru"
 rm -rf dist
 mkdir -p "$OUT/sidecar/uru_sidecar"
 cp main.js manifest.json styles.css "$OUT/"
+cp scripts/verify-staging.mjs "$OUT/"
 cp sidecar/pyproject.toml "$OUT/sidecar/"
 cp sidecar/uru_sidecar/*.py "$OUT/sidecar/uru_sidecar/"
 

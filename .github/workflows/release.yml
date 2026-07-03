@@ -22,6 +22,7 @@ jobs:
           set -e
           mkdir -p dist/uru/sidecar/uru_sidecar
           cp main.js manifest.json styles.css dist/uru/
+          cp scripts/verify-staging.mjs dist/uru/
           cp sidecar/pyproject.toml dist/uru/sidecar/
           cp sidecar/uru_sidecar/*.py dist/uru/sidecar/uru_sidecar/
           (cd dist && zip -r "uru-${GITHUB_REF_NAME}.zip" uru)
