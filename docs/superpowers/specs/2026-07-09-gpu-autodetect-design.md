@@ -110,6 +110,24 @@ silently cannot offload.
 The exact `--list-devices` output format for the `b9838` binary is verified
 as the first implementation step (before coding the parser).
 
+**Implementation refinements (added during code review):**
+
+- **Persisted fallback marker.** When the Vulkan probe finds no usable GPU,
+  a `.llama-vulkan-unavailable` marker file is written under the runtime dir.
+  On later launches, a host that reports a GPU via PCI but can't actually run
+  Vulkan (missing driver/ICD, headless VM) is forced to CPU instead of
+  re-downloading the Vulkan build every launch. Tradeoff: the marker is
+  permanent — a user who later installs a working GPU driver must delete the
+  file to re-enable Vulkan detection. This is acceptable versus the
+  alternative (an infinite per-launch re-download loop).
+- **Staged-swap download.** `fetchLlamaServer` extracts into a `<root>.staging`
+  directory and only removes/replaces the existing `llama.cpp` dir after the
+  new `llama-server` binary is verified present, so a failed or corrupt
+  download never wipes a working install.
+- **Three-state probe.** The device probe returns `gpu` / `none` / `error`,
+  distinguishing "the binary could not launch" from "ran but saw no GPU" for
+  clearer diagnostics; both non-`gpu` outcomes trigger the CPU fallback.
+
 ## Out of scope (YAGNI)
 
 - `--n-gpu-layers` stays `-1` (offload all). The shipped models are small
