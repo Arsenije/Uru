@@ -34,3 +34,17 @@ test("parseWindowsAdapters maps adapter names to a vendor", () => {
 	assert.equal(parseWindowsAdapters([]), "none");
 	assert.equal(parseWindowsAdapters(["Microsoft Basic Display Adapter"]), "none");
 });
+
+import { hasGpuDevice } from "../src/bootstrap/gpu";
+
+test("hasGpuDevice detects a GPU device line from --list-devices output", () => {
+	const withGpu =
+		"Available devices:\n" +
+		"  Vulkan0: AMD Radeon RX 7600 (RADV NAVI33) (8192 MiB, 2343 MiB free)\n";
+	const cpuOnly = "Available devices:\n";
+	assert.equal(hasGpuDevice(withGpu), true);
+	assert.equal(hasGpuDevice(cpuOnly), false);
+	assert.equal(hasGpuDevice(""), false);
+	// also matches CUDA/other backends that use the same "<Name><N>:" shape
+	assert.equal(hasGpuDevice("Available devices:\n  CUDA0: NVIDIA RTX 4070\n"), true);
+});

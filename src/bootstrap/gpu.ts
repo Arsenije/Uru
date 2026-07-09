@@ -30,3 +30,10 @@ export function parseWindowsAdapters(names: string[]): GpuVendor {
 	});
 	return pickVendor(vendors);
 }
+
+/** True if `llama-server --list-devices` output lists a real (GPU) device.
+ *  GPU devices render as an indented "<Backend><N>: ..." line (e.g.
+ *  "  Vulkan0: ..."); a CPU-only build prints the header with no such line. */
+export function hasGpuDevice(listDevicesOutput: string): boolean {
+	return /\n[ \t]+\S+\d+:/.test(listDevicesOutput);
+}
