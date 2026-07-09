@@ -48,3 +48,33 @@ test("hasGpuDevice detects a GPU device line from --list-devices output", () => 
 	// also matches CUDA/other backends that use the same "<Name><N>:" shape
 	assert.equal(hasGpuDevice("Available devices:\n  CUDA0: NVIDIA RTX 4070\n"), true);
 });
+
+import { llamaAssetName, variantForAsset } from "../src/bootstrap/gpu";
+
+const B = "b9838";
+
+test("llamaAssetName picks the Vulkan build for an x64 GPU host", () => {
+	assert.equal(llamaAssetName("linux", "x64", "amd", B), `llama-${B}-bin-ubuntu-vulkan-x64.tar.gz`);
+	assert.equal(llamaAssetName("linux", "x64", "nvidia", B), `llama-${B}-bin-ubuntu-vulkan-x64.tar.gz`);
+	assert.equal(llamaAssetName("win32", "x64", "amd", B), `llama-${B}-bin-win-vulkan-x64.zip`);
+});
+
+test("llamaAssetName falls back to CPU builds without a GPU or on arm64", () => {
+	assert.equal(llamaAssetName("linux", "x64", "none", B), `llama-${B}-bin-ubuntu-x64.tar.gz`);
+	assert.equal(llamaAssetName("linux", "arm64", "amd", B), `llama-${B}-bin-ubuntu-arm64.tar.gz`); // no arm GPU build
+	assert.equal(llamaAssetName("win32", "x64", "none", B), `llama-${B}-bin-win-cpu-x64.zip`);
+	assert.equal(llamaAssetName("win32", "arm64", "amd", B), `llama-${B}-bin-win-cpu-arm64.zip`);
+});
+
+test("llamaAssetName always uses the Metal-capable macOS build", () => {
+	assert.equal(llamaAssetName("darwin", "arm64", "amd", B), `llama-${B}-bin-macos-arm64.tar.gz`);
+	assert.equal(llamaAssetName("darwin", "x64", "none", B), `llama-${B}-bin-macos-x64.tar.gz`);
+});
+
+test("variantForAsset is vulkan only for an x64 non-mac GPU host", () => {
+	assert.equal(variantForAsset("linux", "x64", "amd"), "vulkan");
+	assert.equal(variantForAsset("win32", "x64", "nvidia"), "vulkan");
+	assert.equal(variantForAsset("linux", "x64", "none"), "cpu");
+	assert.equal(variantForAsset("linux", "arm64", "amd"), "cpu");
+	assert.equal(variantForAsset("darwin", "arm64", "amd"), "cpu");
+});
