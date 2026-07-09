@@ -1,8 +1,16 @@
-import { spawn } from "child_process";
-import { chmodSync, existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "fs";
-import { join } from "path";
+import { spawn, spawnSync } from "child_process";
+import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { homedir } from "os";
 import { requestUrl } from "obsidian";
+import {
+	detectGpu,
+	hasGpuDevice,
+	llamaAssetName,
+	variantForAsset,
+	type GpuVendor,
+	type LlamaVariant,
+} from "./gpu";
 
 export interface BackendPaths {
 	pythonPath: string;
@@ -183,11 +191,8 @@ function uvAsset(): string {
 	return arm ? "uv-aarch64-unknown-linux-gnu.tar.gz" : "uv-x86_64-unknown-linux-gnu.tar.gz";
 }
 
-function llamaAsset(): string {
-	const arm = process.arch === "arm64";
-	if (process.platform === "darwin") return `llama-${LLAMA_BUILD}-bin-macos-${arm ? "arm64" : "x64"}.tar.gz`;
-	if (process.platform === "win32") return `llama-${LLAMA_BUILD}-bin-win-cpu-${arm ? "arm64" : "x64"}.zip`;
-	return `llama-${LLAMA_BUILD}-bin-ubuntu-${arm ? "arm64" : "x64"}.tar.gz`;
+function llamaAsset(gpu: GpuVendor): string {
+	return llamaAssetName(process.platform, process.arch, gpu, LLAMA_BUILD);
 }
 
 // ---- component bootstrappers -------------------------------------------
@@ -216,25 +221,75 @@ async function ensureUv(runtimeDir: string, log: (s: string) => void): Promise<s
 	return bin;
 }
 
-async function ensureLlamaServer(runtimeDir: string, log: (s: string) => void): Promise<string> {
-	const root = join(runtimeDir, "llama.cpp");
-	const existing = findFile(root, "llama-server");
-	if (existing) return existing;
+/** Classify an already-installed build: a Vulkan build ships libggml-vulkan.
+ *  Returns null when no llama-server is installed under `root`. */
+function installedVariant(root: string): LlamaVariant | null {
+	const bin = findFile(root, "llama-server");
+	if (!bin) return null;
+	const dir = dirname(bin);
+	const vulkan =
+		existsSync(join(dir, "libggml-vulkan.so")) || existsSync(join(dir, "ggml-vulkan.dll"));
+	return vulkan ? "vulkan" : "cpu";
+}
 
+/** Download + extract + chmod the given release asset; return the llama-server path. */
+async function fetchLlamaServer(
+	runtimeDir: string,
+	root: string,
+	gpu: GpuVendor,
+	log: (s: string) => void,
+): Promise<string> {
 	log("Downloading llama.cpp…");
 	const tmp = join(runtimeDir, "tmp");
 	mkdirSync(tmp, { recursive: true });
-	const asset = llamaAsset();
+	const asset = llamaAsset(gpu);
 	const archive = join(tmp, asset);
 	await download(`https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_BUILD}/${asset}`, archive);
 	await extract(archive, root, log);
 	if (process.platform === "darwin") {
-		// Clear Gatekeeper quarantine so the downloaded binary can run.
 		await run("xattr", ["-dr", "com.apple.quarantine", root], {}, () => {}).catch(() => undefined);
 	}
 	const bin = findFile(root, "llama-server");
 	if (!bin) throw new Error("llama-server not found after extraction");
 	if (process.platform !== "win32") chmodSync(bin, 0o755);
+	return bin;
+}
+
+/** True if `bin --list-devices` reports a usable GPU device. */
+function probeHasGpu(bin: string): boolean {
+	try {
+		const res = spawnSync(bin, ["--list-devices"], { encoding: "utf8", timeout: 15000 });
+		return hasGpuDevice((res.stdout ?? "") + (res.stderr ?? ""));
+	} catch {
+		return false;
+	}
+}
+
+async function ensureLlamaServer(runtimeDir: string, log: (s: string) => void): Promise<string> {
+	const root = join(runtimeDir, "llama.cpp");
+	const gpu = detectGpu();
+	if (gpu !== "none") log(`Detected ${gpu.toUpperCase()} GPU; using GPU-accelerated llama.cpp.`);
+	const desired = variantForAsset(process.platform, process.arch, gpu);
+
+	// Reuse an installed build only when it already matches the desired variant.
+	const installed = installedVariant(root);
+	if (installed === desired) {
+		return findFile(root, "llama-server")!;
+	}
+	if (installed) {
+		log(`Replacing ${installed} llama.cpp build with ${desired} build…`);
+		rmSync(root, { recursive: true, force: true });
+	}
+
+	let bin = await fetchLlamaServer(runtimeDir, root, gpu, log);
+
+	// Safety net: a Vulkan build that can't see a GPU (missing driver/ICD) would
+	// silently run on CPU. Detect that and fall back to the plain CPU build.
+	if (desired === "vulkan" && !probeHasGpu(bin)) {
+		log("Vulkan build reports no GPU device; falling back to the CPU build.");
+		rmSync(root, { recursive: true, force: true });
+		bin = await fetchLlamaServer(runtimeDir, root, "none", log);
+	}
 	return bin;
 }
 
