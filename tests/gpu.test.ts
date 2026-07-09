@@ -56,6 +56,7 @@ const B = "b9838";
 test("llamaAssetName picks the Vulkan build for an x64 GPU host", () => {
 	assert.equal(llamaAssetName("linux", "x64", "amd", B), `llama-${B}-bin-ubuntu-vulkan-x64.tar.gz`);
 	assert.equal(llamaAssetName("linux", "x64", "nvidia", B), `llama-${B}-bin-ubuntu-vulkan-x64.tar.gz`);
+	assert.equal(llamaAssetName("linux", "x64", "intel", B), `llama-${B}-bin-ubuntu-vulkan-x64.tar.gz`);
 	assert.equal(llamaAssetName("win32", "x64", "amd", B), `llama-${B}-bin-win-vulkan-x64.zip`);
 });
 
@@ -74,6 +75,7 @@ test("llamaAssetName always uses the Metal-capable macOS build", () => {
 test("variantForAsset is vulkan only for an x64 non-mac GPU host", () => {
 	assert.equal(variantForAsset("linux", "x64", "amd"), "vulkan");
 	assert.equal(variantForAsset("win32", "x64", "nvidia"), "vulkan");
+	assert.equal(variantForAsset("linux", "x64", "intel"), "vulkan");
 	assert.equal(variantForAsset("linux", "x64", "none"), "cpu");
 	assert.equal(variantForAsset("linux", "arm64", "amd"), "cpu");
 	assert.equal(variantForAsset("darwin", "arm64", "amd"), "cpu");
