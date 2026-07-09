@@ -1,7 +1,7 @@
 {
 	"id": "uru",
 	"name": "Uru",
-	"version": "0.1.8",
+	"version": "0.1.9",
 	"minAppVersion": "0.15.0",
 	"description": "Private, offline AI search and chat for your Obsidian vault — powered by khora.",
 	"author": "Arsenije",

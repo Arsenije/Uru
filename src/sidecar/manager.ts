@@ -219,10 +219,16 @@ export class SidecarManager {
 		};
 		this.proc?.stdout?.on("data", capture);
 		this.proc?.stderr?.on("data", capture);
-		this.proc?.on("exit", (code) => {
+		this.proc?.on("exit", (code, sig) => {
 			this.clearLock();
 			if (this.stoppedByUs) return;
-			this.emit("error", `backend exited (code ${code ?? "?"})`);
+			// Record HOW it died in the diagnostics ring: a signal death (SIGKILL →
+			// likely the OOM killer; SIGSEGV/SIGILL → native crash in a compiled dep)
+			// produces no Python traceback, so without this line a beta tester's log
+			// just stops mid-boot with nothing to distinguish the failure modes.
+			const how = `code ${code ?? "?"}${sig ? `, signal ${sig}` : ""}`;
+			this.stderrRing.push(`[manager] backend exited (${how})`);
+			this.emit("error", `backend exited (${how})`);
 			void this.scheduleRestart();
 		});
 	}

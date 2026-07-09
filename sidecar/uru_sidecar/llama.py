@@ -13,13 +13,37 @@ CPU elsewhere).
 
 from __future__ import annotations
 
+import signal
 import socket
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+
+# Linux: make each llama-server die with this process (PR_SET_PDEATHSIG). When
+# this python process dies without running cleanup — SIGKILL from the OOM
+# killer, a native SIGSEGV in a compiled dependency — both llama servers
+# (several GB RSS) would otherwise outlive it as orphans: the plugin clears the
+# lockfile on exit before restarting, and its pgrep backstop matches the vault
+# db path, which never appears on a llama-server command line. Each
+# crash-restart cycle then stacks two more resident servers, ratcheting memory
+# pressure until startup can't succeed at all. The libc handle is loaded here
+# in the parent because ``preexec_fn`` runs in the forked child before exec,
+# where imports/allocations are unsafe. macOS has no PDEATHSIG; there the
+# plugin's process-group kill covers every managed shutdown path.
+if sys.platform == "linux":
+    import ctypes
+
+    _LIBC = ctypes.CDLL("libc.so.6", use_errno=True)
+    _PR_SET_PDEATHSIG = 1  # linux/prctl.h
+
+    def _die_with_parent() -> None:
+        _LIBC.prctl(_PR_SET_PDEATHSIG, int(signal.SIGKILL))
+else:
+    _die_with_parent = None
 
 
 def free_port() -> int:
@@ -87,7 +111,9 @@ class LlamaServer:
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.work_dir / f"llama-{self.alias}.log"
         log = open(self._log_path, "w")  # noqa: SIM115 — handle owned by the child
-        self._proc = subprocess.Popen(self._args(), stdout=log, stderr=subprocess.STDOUT)
+        self._proc = subprocess.Popen(
+            self._args(), stdout=log, stderr=subprocess.STDOUT, preexec_fn=_die_with_parent
+        )
 
     def log_tail(self, n: int = 25) -> str:
         if not self._log_path or not self._log_path.exists():

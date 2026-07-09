@@ -5,10 +5,16 @@ All notable changes to Uru are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.9] — 2026-07-09
 
 ### Added
 - **Automatic GPU acceleration on Windows and Linux.** On first run Uru now detects a supported GPU (AMD, Nvidia, or Intel) and downloads a Vulkan build of llama.cpp instead of the CPU-only build, so chat and indexing run on the GPU — a large speedup, especially for Deep mode. It falls back to the CPU build automatically if no usable GPU is found (and remembers that so it doesn't re-download each launch). Existing installs are upgraded to the GPU build on the next launch when a GPU is present. macOS is unchanged (it already uses the Metal GPU).
+
+### Fixed
+- **Linux setup no longer downloads ~6 GB of unused NVIDIA CUDA libraries.** The backend install now always picks the CPU build of PyTorch — Uru only carries PyTorch as an indirect dependency and never runs it (all AI inference happens in llama.cpp), but on Linux the default download was the CUDA build plus 21 NVIDIA packages. First-run setup on Linux is now several GB smaller and minutes faster.
+- **A crashing backend no longer piles up llama.cpp processes.** If the backend process died unexpectedly (e.g. killed by the OS when memory ran out), its two llama.cpp servers were left running, and every automatic restart added two more — eating memory until startup could no longer succeed. On Linux the llama.cpp servers now shut down with the backend no matter how it dies.
+- **The backend was reinstalled on every launch** due to a version-pin mismatch (the plugin expected sidecar 0.2.10 while the bundled code reported 0.2.9). The versions are back in sync, so a healthy install is reused.
+- **Crash diagnostics now record how the backend exited** (exit code and signal), so a silent native crash or out-of-memory kill shows up in the diagnostics log instead of the log just stopping mid-startup.
 
 ## [0.1.8] — 2026-07-03
 

@@ -39,7 +39,7 @@ const KHORA_VERSION = "0.21.0";
 // Bumped whenever the bundled `uru_sidecar` Python changes. The app-data venv is
 // reinstalled when the installed copy differs, so pure-Python sidecar fixes reach
 // existing users (khora alone wouldn't trigger it — its pin rarely moves).
-const SIDECAR_VERSION = "0.2.10";
+const SIDECAR_VERSION = "0.2.11";
 
 // Models. The embedding model fixes the vector dimension.
 // Chat/extraction: Qwen2.5-3B. A 5-model bake-off (3B/7B, Qwen3-8B, Llama-3.1-8B,
@@ -372,7 +372,22 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 				: `Updating backend (khora ${installed.khora}→${KHORA_VERSION}, ` +
 						`sidecar ${installed.sidecar}→${SIDECAR_VERSION})…`,
 		);
-		await run(uv, ["pip", "install", "--python", py, "--force-reinstall", pluginSidecarDir], { env }, log);
+		// Force the CPU torch wheel. torch is pulled in only transitively (khora →
+		// sentence-transformers) and is never imported at runtime: the sidecar
+		// disables khora's cross-encoder reranker (the sole torch consumer, and a
+		// lazy import at that) and all inference runs through llama-server. On
+		// Linux x64 the default PyPI `torch` is the CUDA build, dragging in ~6 GB
+		// of nvidia-*/triton wheels — a 10-minute install of pure dead weight.
+		// UV_TORCH_BACKEND=cpu resolves torch from the CPU index instead (small,
+		// driver-independent). Env var rather than --torch-backend flag: ensureUv
+		// may pick up a pre-existing system uv, and a version predating the flag
+		// would hard-fail on it, while an unknown env var is simply ignored.
+		await run(
+			uv,
+			["pip", "install", "--python", py, "--force-reinstall", pluginSidecarDir],
+			{ env: { ...env, UV_TORCH_BACKEND: "cpu" } },
+			log,
+		);
 		if ((await probeVersions(py)) === null) {
 			throw new Error(
 				"backend dependencies missing after install — `import uru_sidecar/khora/huggingface_hub` failed; check diagnostics.",
