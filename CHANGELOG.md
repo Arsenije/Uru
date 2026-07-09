@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Automatic GPU acceleration on Windows and Linux.** On first run Uru now detects a supported GPU (AMD, Nvidia, or Intel) and downloads a Vulkan build of llama.cpp instead of the CPU-only build, so chat and indexing run on the GPU — a large speedup, especially for Deep mode. It falls back to the CPU build automatically if no usable GPU is found (and remembers that so it doesn't re-download each launch). Existing installs are upgraded to the GPU build on the next launch when a GPU is present. macOS is unchanged (it already uses the Metal GPU).
+
 ## [0.1.8] — 2026-07-03
 
 ### Added

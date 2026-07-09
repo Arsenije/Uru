@@ -157,7 +157,8 @@ If you already removed the plugin without doing step 1, see
 |---|---|
 | **Apple Silicon (M1–M4)** | Best experience — the models run on the Metal GPU. Quick indexing is near-instant; Deep is comfortably usable. |
 | **Intel Macs** | CPU-only. Quick is fine; Deep indexing is slow (large vaults take a while). |
-| **Windows / Linux** | CPU builds of llama.cpp. Quick is fine; Deep is slow — index overnight or use Quick. |
+| **Windows / Linux + GPU** | Uru auto-detects a supported GPU (AMD, Nvidia, or Intel) and runs the models on it via a Vulkan build of llama.cpp — both Quick and Deep are much faster. Falls back to CPU automatically if no usable GPU is found. |
+| **Windows / Linux, no GPU** | CPU builds of llama.cpp. Quick is fine; Deep is slow — index overnight or use Quick. |
 | **Memory** | A few GB of RAM while running (a 3B chat model plus an embedding model stay resident). Closing the panels lets the backend idle-shut-down after ~2 min. |
 
 ## Quick vs Deep
