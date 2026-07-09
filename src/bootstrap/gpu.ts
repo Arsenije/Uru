@@ -1,0 +1,20 @@
+export type GpuVendor = "amd" | "nvidia" | "intel" | "none";
+
+const PCI_VENDORS: Record<string, GpuVendor> = {
+	"0x1002": "amd",
+	"0x10de": "nvidia",
+	"0x8086": "intel",
+};
+
+/** Map a `/sys/.../device/vendor` value (e.g. "0x1002\n") to a GpuVendor. */
+export function parseVendorId(raw: string): GpuVendor {
+	return PCI_VENDORS[raw.trim().toLowerCase()] ?? "none";
+}
+
+/** Choose one vendor from all detected display controllers: a discrete GPU
+ *  (amd/nvidia) wins over an integrated one (intel). */
+export function pickVendor(vendors: GpuVendor[]): GpuVendor {
+	const real = vendors.filter((v) => v !== "none");
+	if (real.length === 0) return "none";
+	return real.find((v) => v === "amd" || v === "nvidia") ?? real[0];
+}
