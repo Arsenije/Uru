@@ -18,3 +18,15 @@ export function pickVendor(vendors: GpuVendor[]): GpuVendor {
 	if (real.length === 0) return "none";
 	return real.find((v) => v === "amd" || v === "nvidia") ?? real[0];
 }
+
+/** Map Windows `Win32_VideoController` adapter names to a single vendor. */
+export function parseWindowsAdapters(names: string[]): GpuVendor {
+	const vendors = names.map<GpuVendor>((n) => {
+		const s = n.toLowerCase();
+		if (s.includes("nvidia")) return "nvidia";
+		if (s.includes("amd") || s.includes("radeon")) return "amd";
+		if (s.includes("intel")) return "intel";
+		return "none";
+	});
+	return pickVendor(vendors);
+}
