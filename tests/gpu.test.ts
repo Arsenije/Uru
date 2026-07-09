@@ -78,3 +78,42 @@ test("variantForAsset is vulkan only for an x64 non-mac GPU host", () => {
 	assert.equal(variantForAsset("linux", "arm64", "amd"), "cpu");
 	assert.equal(variantForAsset("darwin", "arm64", "amd"), "cpu");
 });
+
+import { detectGpuLinux } from "../src/bootstrap/gpu";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+
+function fakeDrm(cards: Array<{ name: string; cls: string; vendor: string }>): string {
+	const root = mkdtempSync(join(tmpdir(), "drm-"));
+	for (const c of cards) {
+		const dev = join(root, c.name, "device");
+		mkdirSync(dev, { recursive: true });
+		writeFileSync(join(dev, "class"), c.cls + "\n");
+		writeFileSync(join(dev, "vendor"), c.vendor + "\n");
+	}
+	return root;
+}
+
+test("detectGpuLinux reads a display-controller AMD GPU from sysfs", () => {
+	const root = fakeDrm([{ name: "card0", cls: "0x030000", vendor: "0x1002" }]);
+	try {
+		assert.equal(detectGpuLinux(root), "amd");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("detectGpuLinux skips non-display-controller devices", () => {
+	// 0x010802 = non-volatile memory controller, not a GPU
+	const root = fakeDrm([{ name: "card0", cls: "0x010802", vendor: "0x1002" }]);
+	try {
+		assert.equal(detectGpuLinux(root), "none");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("detectGpuLinux returns none when the sysfs path is absent", () => {
+	assert.equal(detectGpuLinux("/no/such/path/xyz"), "none");
+});

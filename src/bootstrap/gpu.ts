@@ -1,3 +1,7 @@
+import { readdirSync, readFileSync } from "fs";
+import { join } from "path";
+import { spawnSync } from "child_process";
+
 export type GpuVendor = "amd" | "nvidia" | "intel" | "none";
 
 const PCI_VENDORS: Record<string, GpuVendor> = {
@@ -73,4 +77,55 @@ export function variantForAsset(
 	gpu: GpuVendor,
 ): LlamaVariant {
 	return gpuCapable(platform, arch, gpu) ? "vulkan" : "cpu";
+}
+
+/** Detect the GPU vendor on Linux by reading /sys/class/drm/card*. Pure file
+ *  reads — no lspci/vulkaninfo. `sysfsRoot` is injectable for tests. */
+export function detectGpuLinux(sysfsRoot = "/sys/class/drm"): GpuVendor {
+	let cards: string[];
+	try {
+		cards = readdirSync(sysfsRoot).filter((n) => /^card\d+$/.test(n));
+	} catch {
+		return "none";
+	}
+	const vendors: GpuVendor[] = [];
+	for (const card of cards) {
+		const dev = join(sysfsRoot, card, "device");
+		try {
+			const cls = readFileSync(join(dev, "class"), "utf8").trim().toLowerCase();
+			if (!cls.startsWith("0x03")) continue; // display controllers only
+			const vendor = parseVendorId(readFileSync(join(dev, "vendor"), "utf8"));
+			if (vendor !== "none") vendors.push(vendor);
+		} catch {
+			continue; // missing/unreadable node — skip this card
+		}
+	}
+	return pickVendor(vendors);
+}
+
+/** Detect the GPU vendor on Windows via PowerShell / WMI. */
+export function detectGpuWindows(): GpuVendor {
+	try {
+		const res = spawnSync(
+			"powershell",
+			[
+				"-NoProfile",
+				"-Command",
+				"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
+			],
+			{ encoding: "utf8", timeout: 5000 },
+		);
+		if (res.status !== 0 || !res.stdout) return "none";
+		return parseWindowsAdapters(res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
+	} catch {
+		return "none";
+	}
+}
+
+/** Detect a supported GPU on the current host. macOS returns "none": its
+ *  standard build already includes Metal, so no Vulkan swap is needed. */
+export function detectGpu(): GpuVendor {
+	if (process.platform === "linux") return detectGpuLinux();
+	if (process.platform === "win32") return detectGpuWindows();
+	return "none";
 }
