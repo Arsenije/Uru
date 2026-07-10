@@ -75,8 +75,8 @@ def main() -> None:
             if time.time() - before > interval * 3:
                 runtime.touch()
                 continue
-            # Never shut down while a request is in flight (e.g. a Deep-mode note
-            # whose extraction runs longer than the idle window).
+            # Never shut down while a request is in flight (e.g. a chat answer
+            # that runs longer than the idle window).
             if runtime.status == "ok" and not runtime.has_inflight() and runtime.idle_seconds() > timeout:
                 log.warning("idle %.0fs > %ds — shutting down", runtime.idle_seconds(), timeout)
                 await runtime.stop()

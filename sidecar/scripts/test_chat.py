@@ -54,12 +54,10 @@ def main() -> int:
                 pass
             time.sleep(1)
 
-        ent_total = 0
         for d in DOCS:
             rr = httpx.post(f"{base}/remember", headers=auth, json=d, timeout=180).json()
-            ent_total += rr.get("entities_extracted", 0)
-            print(f"[remember] {d['external_id']}: entities={rr.get('entities_extracted')} rels={rr.get('relationships_created')}")
-        print(f"[ready] indexed fixtures, {ent_total} entities total")
+            print(f"[remember] {d['external_id']}: chunks={rr.get('chunks_created')}")
+        print("[ready] indexed fixtures")
 
         q = "Who won a Nobel Prize in Chemistry and what did they discover?"
 

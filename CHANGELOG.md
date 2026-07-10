@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Deep indexing (entity extraction) is gone.** Uru no longer runs a local model over every note to map people, places, and ideas — indexing is now always the fast embeddings-only path (what used to be called "Quick"). The Deep/Quick choice disappears from the chat first-run prompt and Settings, the "People & topics" chips disappear from Recall, and indexing a large vault drops from hours to minutes. Recall, chat, and citations are unchanged. Notes indexed under Deep mode keep working as-is; no re-index is needed.
+- **"Link notes in the graph" is gone.** The Settings section that wrote a "uru-links" property into your notes' frontmatter (so connections showed in Obsidian's Graph view) has been removed. On the first launch after updating, Uru automatically strips the "uru-links" property from any notes that still carry it — the same clean undo the "Remove Uru links" button performed — and tells you how many notes were cleaned. Your note text and other properties are untouched.
+
 ### Fixed
 - **No more stray console windows on Windows.** Each local AI server (chat + embedding, and a fresh one on every crash-restart) used to pop up its own `cmd` window because it inherited no console from the backend. The servers now launch with `CREATE_NO_WINDOW`, and first-run setup steps (uv, Python, GPU detection) no longer flash a console either. Windows only — macOS and Linux were never affected.
 - **A crashing backend no longer piles up llama.cpp processes on Windows either.** The Windows backend now runs its llama.cpp servers inside a kill-on-close Job Object, so they shut down with the backend no matter how it dies (matching the Linux behavior added in 0.1.9). Previously a hard crash could leave llama.cpp servers resident and stack more on each restart.

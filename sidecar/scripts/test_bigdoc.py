@@ -1,7 +1,7 @@
 """Reproduce the failing case: a large multi-chunk note via /remember.
 
 Confirms the concurrency=1 + raised-timeout fix lets a big document finish
-extraction instead of the 30s-timeout retry storm seen in the field log.
+indexing instead of the 30s-timeout retry storm seen in the field log.
 """
 
 from __future__ import annotations

@@ -26,7 +26,7 @@ LLAMA_SERVER = HERE / ".llamacpp-test" / "llama-b9838" / "llama-server"
 
 FIXTURE = (
     "Uru is an Obsidian plugin by Archie at DeytaHQ. It uses khora for "
-    "knowledge-graph extraction and runs locally with llama.cpp."
+    "vector search and runs locally with llama.cpp."
 )
 
 
@@ -90,7 +90,7 @@ def main() -> int:
             json={"query": "What does Uru use?", "limit": 5}, timeout=120,
         ).json()
         ext_ids = [d["external_id"] for d in res["documents"]]
-        print(f"[recall] chunks={len(res['chunks'])} entities={len(res['entities'])} docs={ext_ids}")
+        print(f"[recall] chunks={len(res['chunks'])} docs={ext_ids}")
         assert res["chunks"], "no chunks returned"
         assert "Notes/Uru.md" in ext_ids, "linkback external_id missing"
 

@@ -1,6 +1,6 @@
 """Supervise local llama.cpp ``llama-server`` processes.
 
-We run **two single-model** servers — one chat/extraction model, one embedding
+We run **two single-model** servers — one chat model, one embedding
 model — so each stays resident in memory; a thin proxy (``proxy.py``) fronts both
 so khora needs only a single ``OPENAI_API_BASE``.
 
