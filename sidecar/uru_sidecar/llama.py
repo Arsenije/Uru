@@ -43,7 +43,115 @@ if sys.platform == "linux":
     def _die_with_parent() -> None:
         _LIBC.prctl(_PR_SET_PDEATHSIG, int(signal.SIGKILL))
 else:
+    # preexec_fn is POSIX-only; passing a non-None value on Windows raises.
     _die_with_parent = None
+
+
+# Windows: llama-server is a console-subsystem exe, and the plugin spawns our
+# python.exe with no console to inherit (see src/sidecar/manager.ts). Without
+# CREATE_NO_WINDOW, Windows allocates a fresh console *window* for each server —
+# one per model (chat + embed), plus a new one on every crash-restart. stdout
+# and stderr already go to a logfile, so the console has no job to do;
+# CREATE_NO_WINDOW still gives the child a console *object* (file redirection
+# stays sane), just never a visible window. Zero elsewhere (a no-op flag).
+_CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    # Windows equivalent of Linux PR_SET_PDEATHSIG (above): a Job Object with
+    # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE. The kernel kills every process in the
+    # job the moment the last handle to it closes — which happens when this
+    # python process exits for ANY reason, including TerminateProcess or a native
+    # crash that runs no cleanup. Without it, an uncleaned sidecar death orphans
+    # the llama servers (several GB RSS each), and each crash-restart stacks two
+    # more until startup can't succeed. This is strictly better than the plugin's
+    # taskkill /T backstop, which can miss a tree that's already been reparented.
+    # One shared job holds every llama child; the handle is kept referenced for
+    # the process lifetime by the module global (closing it early would kill the
+    # servers), and the OS closes it during process teardown.
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+    _JobObjectExtendedLimitInformation = 9
+
+    class _JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class _JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _JOBOBJECT_BASIC_LIMIT_INFORMATION),
+            ("IoInfo", _IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    _kernel32 = ctypes.WinDLL("kernel32", use_errno=True)
+    _kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    _kernel32.CreateJobObjectW.argtypes = [wintypes.LPVOID, wintypes.LPCWSTR]
+    _kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    _kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD,
+    ]
+    _kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    _kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    _JOB_HANDLE: int | None = None
+
+    def _job_handle() -> int | None:
+        """Lazily create the shared kill-on-close job; None if unavailable."""
+        global _JOB_HANDLE
+        if _JOB_HANDLE is None:
+            job = _kernel32.CreateJobObjectW(None, None)
+            if not job:
+                return None
+            info = _JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            if not _kernel32.SetInformationJobObject(
+                job, _JobObjectExtendedLimitInformation, ctypes.byref(info), ctypes.sizeof(info)
+            ):
+                _kernel32.CloseHandle(job)
+                return None
+            _JOB_HANDLE = job
+        return _JOB_HANDLE
+
+    def _assign_to_job(proc: subprocess.Popen) -> None:
+        """Best-effort: put a spawned llama child in the kill-on-close job.
+
+        On Win8+ a process can belong to nested jobs, so this composes with the
+        job libuv puts our python.exe in. Failure is non-fatal — the plugin's
+        taskkill /T shutdown path still covers the managed case.
+        """
+        job = _job_handle()
+        if job:
+            _kernel32.AssignProcessToJobObject(job, int(proc._handle))
+
+else:
+    def _assign_to_job(proc: subprocess.Popen) -> None:  # noqa: ARG001 — POSIX no-op
+        pass
 
 
 def free_port() -> int:
@@ -112,8 +220,13 @@ class LlamaServer:
         self._log_path = self.work_dir / f"llama-{self.alias}.log"
         log = open(self._log_path, "w")  # noqa: SIM115 — handle owned by the child
         self._proc = subprocess.Popen(
-            self._args(), stdout=log, stderr=subprocess.STDOUT, preexec_fn=_die_with_parent
+            self._args(),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            preexec_fn=_die_with_parent,
+            creationflags=_CREATION_FLAGS,
         )
+        _assign_to_job(self._proc)
 
     def log_tail(self, n: int = 25) -> str:
         if not self._log_path or not self._log_path.exists():

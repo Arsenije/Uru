@@ -39,7 +39,7 @@ const KHORA_VERSION = "0.21.0";
 // Bumped whenever the bundled `uru_sidecar` Python changes. The app-data venv is
 // reinstalled when the installed copy differs, so pure-Python sidecar fixes reach
 // existing users (khora alone wouldn't trigger it — its pin rarely moves).
-const SIDECAR_VERSION = "0.2.11";
+const SIDECAR_VERSION = "0.2.12";
 
 // Models. The embedding model fixes the vector dimension.
 // Chat/extraction: Qwen2.5-3B. A 5-model bake-off (3B/7B, Qwen3-8B, Llama-3.1-8B,
@@ -77,7 +77,9 @@ function run(
 	onLine: (s: string) => void,
 ): Promise<void> {
 	return new Promise((resolve, reject) => {
-		const p = spawn(cmd, args, { cwd: opts.cwd, env: opts.env });
+		// windowsHide: uv/python are console-subsystem exes; without this each
+		// first-run bootstrap step flashes a cmd window in the user's face.
+		const p = spawn(cmd, args, { cwd: opts.cwd, env: opts.env, windowsHide: true });
 		const cap = (b: Buffer) => b.toString().split("\n").forEach((l) => l && onLine(l));
 		p.stdout.on("data", cap);
 		p.stderr.on("data", cap);
@@ -91,7 +93,7 @@ function run(
 /** Run a command and resolve with its exit code + combined output (never rejects). */
 function capture(cmd: string, args: string[]): Promise<{ code: number; out: string }> {
 	return new Promise((resolve) => {
-		const p = spawn(cmd, args);
+		const p = spawn(cmd, args, { windowsHide: true });
 		let out = "";
 		const cap = (b: Buffer) => (out += b.toString());
 		p.stdout.on("data", cap);
@@ -277,7 +279,7 @@ async function fetchLlamaServer(
 /** Run `bin --list-devices`. "gpu": a GPU device is listed. "none": ran but only
  *  CPU. "error": the binary could not be launched at all. */
 function probeGpu(bin: string): "gpu" | "none" | "error" {
-	const res = spawnSync(bin, ["--list-devices"], { encoding: "utf8", timeout: 15000 });
+	const res = spawnSync(bin, ["--list-devices"], { encoding: "utf8", timeout: 15000, windowsHide: true });
 	if (res.error) return "error";
 	return hasGpuDevice((res.stdout ?? "") + (res.stderr ?? "")) ? "gpu" : "none";
 }

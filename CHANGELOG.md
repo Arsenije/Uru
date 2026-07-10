@@ -5,6 +5,12 @@ All notable changes to Uru are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **No more stray console windows on Windows.** Each local AI server (chat + embedding, and a fresh one on every crash-restart) used to pop up its own `cmd` window because it inherited no console from the backend. The servers now launch with `CREATE_NO_WINDOW`, and first-run setup steps (uv, Python, GPU detection) no longer flash a console either. Windows only — macOS and Linux were never affected.
+- **A crashing backend no longer piles up llama.cpp processes on Windows either.** The Windows backend now runs its llama.cpp servers inside a kill-on-close Job Object, so they shut down with the backend no matter how it dies (matching the Linux behavior added in 0.1.9). Previously a hard crash could leave llama.cpp servers resident and stack more on each restart.
+
 ## [0.1.9] — 2026-07-09
 
 ### Added
