@@ -39,15 +39,12 @@ const KHORA_VERSION = "0.21.0";
 // Bumped whenever the bundled `uru_sidecar` Python changes. The app-data venv is
 // reinstalled when the installed copy differs, so pure-Python sidecar fixes reach
 // existing users (khora alone wouldn't trigger it — its pin rarely moves).
-const SIDECAR_VERSION = "0.2.12";
+const SIDECAR_VERSION = "0.3.0";
 
 // Models. The embedding model fixes the vector dimension.
-// Chat/extraction: Qwen2.5-3B. A 5-model bake-off (3B/7B, Qwen3-8B, Llama-3.1-8B,
-// Gemma-3-1B) found the earlier extraction failures were caused entirely by too
-// low an output-token cap, not the model — with a roomy budget the 3B produces
-// clean JSON on every chunk while indexing 3-4x faster than any 8B (and staying
-// well under the request timeout). The bigger models add only marginally more
-// entities at 3-4x the wall-clock, so the 3B is the right default for a local vault.
+// Chat: Qwen2.5-3B. A 5-model bake-off (3B/7B, Qwen3-8B, Llama-3.1-8B, Gemma-3-1B)
+// found the 3B answers as reliably as any 8B at 3-4x the speed on local hardware,
+// so it's the right default for a local vault.
 const CHAT_REPO = "bartowski/Qwen2.5-3B-Instruct-GGUF";
 const CHAT_GGUF = "Qwen2.5-3B-Instruct-Q4_K_M.gguf";
 // Revision-pinned so a repo update can't silently swap the weights underneath us

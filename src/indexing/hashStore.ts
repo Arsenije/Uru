@@ -13,18 +13,12 @@ export interface IndexEntry {
 	hash: string;
 	docId: string;
 	lastIndexed: number;
-	/**
-	 * Extraction mode the note was last indexed under (true = full KG, false =
-	 * embeddings-only). Undefined on entries written before this was tracked.
-	 * Drives forced re-extraction when the user toggles Lite ↔ Full.
-	 */
-	extractEntities?: boolean;
 }
 
 /**
  * Persists `{ vault-relative path -> {hash, docId, lastIndexed} }` so the
- * indexer can skip unchanged notes (avoiding per-note LLM extraction cost) and
- * resolve a path to its khora document id for fast deletes.
+ * indexer can skip unchanged notes and resolve a path to its khora document id
+ * for fast deletes.
  *
  * Stored at an absolute app-data path (outside the vault) so it survives plugin
  * updates alongside the khora db — hence node `fs`, not Obsidian's DataAdapter.

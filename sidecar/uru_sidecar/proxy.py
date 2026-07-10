@@ -19,7 +19,7 @@ import httpx
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import StreamingResponse
 
-# llama.cpp can be slow on a cold model load + long extraction prompts.
+# llama.cpp can be slow on a cold model load + long prompts.
 _TIMEOUT = httpx.Timeout(600.0, connect=10.0)
 
 # finish_reason values meaning "hit the output-token ceiling" rather than a
@@ -74,17 +74,17 @@ def build_proxy_router(
     """Return a router exposing /v1/{chat/completions,completions,embeddings,models}.
 
     ``raw_log_path``, if given, gets one JSON line per chat-completion call with
-    the full request + response bodies — for offline debugging of extraction
+    the full request + response bodies — for offline debugging of chat
     behavior (what prompt went in, what came back, verbatim). Kept separate
     from ``ChatCallStat``/``on_chat_completion``, which stay small and cheap
     for the always-on /health rolling window; this is opt-in and unbounded.
 
     ``openai_chat`` (TEMPORARY testing aid), if given as
     ``{"base": "https://api.openai.com/v1", "key": "sk-...", "model": "gpt-4o-mini"}``,
-    routes chat/completions (extraction + RAG) to real OpenAI instead of the local
+    routes chat/completions to real OpenAI instead of the local
     chat server — the note model is rewritten to ``model``. Embeddings stay local
-    (bge-m3), so the vector dimension is unchanged. Lets us build an entity graph
-    fast on a cloud model without touching khora's single-base config.
+    (bge-m3), so the vector dimension is unchanged. Lets us test against a cloud
+    model without touching khora's single-base config.
     """
     router = APIRouter()
 
@@ -164,7 +164,7 @@ def build_proxy_router(
 
         # Pass the upstream SSE through unbuffered so tokens arrive incrementally,
         # while still watching for the final chunk's finish_reason so streaming
-        # RAG-chat calls get the same loop/duration visibility as extraction calls.
+        # every chat call gets the same loop/duration visibility.
         async def upstream():
             finish_reason: str | None = None
             content_parts: list[str] = []

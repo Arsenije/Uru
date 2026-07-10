@@ -2,7 +2,7 @@
 
 **Ask your Obsidian vault anything — and get answers from what you actually wrote, completely offline.**
 
-Uru makes your [Obsidian](https://obsidian.md) vault searchable by meaning and lets you *recall* or *chat* with everything you've written — with citations back to the exact notes. In **Deep** mode it also maps the people, projects, and ideas across your notes and how they connect. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
+Uru makes your [Obsidian](https://obsidian.md) vault searchable by meaning and lets you *recall* or *chat* with everything you've written — with citations back to the exact notes. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
 
 It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first search-and-connections library. Obsidian can't run Python, so Uru ships a tiny local backend that drives khora for you — you never have to touch it.
 
@@ -12,7 +12,6 @@ It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first search-
 
 - **Recall.** Ask a question and get the most relevant passages from across your vault — semantic, not keyword. Each result links back to its note.
 - **Chat with your vault.** A RAG chat panel that answers from your notes and cites them by `[1]`, `[2]`. Scope it to the whole vault or just the current note.
-- **Map the connections.** In Deep mode, Uru maps the people, places, and ideas across your notes and how they relate, so recall can follow connections, not just similarity.
 - **Index automatically.** New and changed notes are picked up as you write; deletes and renames are handled too. No manual re-sync.
 - **Stay private.** No account, no API keys, no network calls after the one-time model download. Your notes never leave your computer.
 
@@ -39,7 +38,7 @@ npm run install-plugin -- "<your-vault>"    # builds, then deploys into .obsidia
 Then, either way:
 
 3. **Enable it.** In Obsidian: **Settings → Community plugins → enable Uru**.
-4. **Run setup.** A dialog opens — pick **Quick** (fast search by meaning) or **Deep** (also maps how your notes connect), then **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
+4. **Run setup.** A dialog opens — click **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
 5. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Recall"** or open the chat (💬 ribbon icon).
 
 ### For AI assistants
@@ -87,8 +86,8 @@ STEP 2 — VERIFY staging (headless; this is as far as you can verify — everyt
 
 STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
   Tell them: "Open Obsidian → Settings → Community plugins → enable 'Uru'.
-  A setup dialog appears — choose Quick (fast) or Deep (also maps how your
-  notes connect), then click 'Install & start'. The first run downloads ~3 GB; wait for it."
+  A setup dialog appears — click 'Install & start'. The first run downloads
+  ~3 GB; wait for it."
 
 STEP 4 — tell them the success signal:
   The Obsidian status bar shows `Uru ✓`. If it shows `Uru ✕`, the setup
@@ -155,26 +154,17 @@ If you already removed the plugin without doing step 1, see
 
 | Your setup | What to expect |
 |---|---|
-| **Apple Silicon (M1–M4)** | Best experience — the models run on the Metal GPU. Quick indexing is near-instant; Deep is comfortably usable. |
-| **Intel Macs** | CPU-only. Quick is fine; Deep indexing is slow (large vaults take a while). |
-| **Windows / Linux + GPU** | Uru auto-detects a supported GPU (AMD, Nvidia, or Intel) and runs the models on it via a Vulkan build of llama.cpp — both Quick and Deep are much faster. Falls back to CPU automatically if no usable GPU is found. |
-| **Windows / Linux, no GPU** | CPU builds of llama.cpp. Quick is fine; Deep is slow — index overnight or use Quick. |
+| **Apple Silicon (M1–M4)** | Best experience — the models run on the Metal GPU. Indexing is near-instant; chat is snappy. |
+| **Intel Macs** | CPU-only. Indexing is fine; chat answers take a bit longer. |
+| **Windows / Linux + GPU** | Uru auto-detects a supported GPU (AMD, Nvidia, or Intel) and runs the models on it via a Vulkan build of llama.cpp — much faster. Falls back to CPU automatically if no usable GPU is found. |
+| **Windows / Linux, no GPU** | CPU builds of llama.cpp. Indexing is fine; chat answers take a bit longer. |
 | **Memory** | A few GB of RAM while running (a 3B chat model plus an embedding model stay resident). Closing the panels lets the backend idle-shut-down after ~2 min. |
-
-## Quick vs Deep
-
-You choose this at setup and can change it later in **Settings → Uru** (then restart Uru and re-index everything).
-
-- **Quick** — search by meaning only. Fast, near-instant indexing. Great recall and chat. No connections map.
-- **Deep** — everything in Quick **plus** a map of how your notes connect: Uru reads each note with a local model (~5–30s per note) to find the people, places, and ideas and how they relate, so recall can follow connections between notes.
-
-Switching modes re-indexes affected notes automatically on the next **Re-index everything** — no manual cleanup needed.
 
 ## Troubleshooting
 
 - **Stuck on "starting" / setup failed** — the setup dialog (and Settings → Uru) has a **Copy diagnostics** button. Paste that when reporting an issue.
 - **`Uru ✕` after it was working** — an inference server may have crashed; Uru restarts it automatically and the badge returns to `Uru ✓`. If it stays red, grab diagnostics.
-- **Indexing is slow** — that's Deep mode running the model on every note. Switch to **Quick** in Settings, or run **"Uru: Stop indexing"** any time.
+- **Indexing is slow** — very large vaults can take a while on CPU-only machines. Run **"Uru: Stop indexing"** any time; the next run resumes where it left off.
 - **Start over** — Settings → Uru → Danger zone → **"Reset this vault's Uru data"** clears this vault's index (keeps the shared backend); re-enable from Settings → Uru → "Re-run setup".
 - **I already removed the plugin and now have leftover files** — Uru couldn't run any cleanup code, since the plugin is gone. Manually delete the per-OS folder from the [Privacy](#privacy) table (e.g. `~/Library/Application Support/uru` on macOS). This is only safe if you're not using Uru in any other vault — if you are, open `uru/vaults.json` to see which `uru/vaults/<id>` subfolder belongs to which vault (by name/path), delete only the ones you no longer need, and leave `uru/runtime` alone.
 
@@ -191,10 +181,10 @@ Obsidian plugin (TypeScript)
                                    └─ proxy → 2× llama.cpp servers (chat + embed)
 ```
 
-khora is a pure-Python library, so the plugin drives it through a small local **sidecar**. The sidecar runs two single-model `llama-server` processes — a chat model (used for extraction and RAG answers) and an embedding model — behind a one-URL, OpenAI-compatible proxy, then points khora at them. It supervises those processes and restarts either one if it dies, and idle-shuts-down when you're not using Uru.
+khora is a pure-Python library, so the plugin drives it through a small local **sidecar**. The sidecar runs two single-model `llama-server` processes — a chat model (used for RAG answers) and an embedding model — behind a one-URL, OpenAI-compatible proxy, then points khora at them. It supervises those processes and restarts either one if it dies, and idle-shuts-down when you're not using Uru.
 
 **Default models** (~3 GB total):
-- Chat / extraction: `Qwen2.5-3B-Instruct` (Q4_K_M GGUF)
+- Chat: `Qwen2.5-3B-Instruct` (Q4_K_M GGUF)
 - Embeddings: `bge-m3` (Q8_0 GGUF, 1024-dim, 8192-token context — the dimension fixes the vector dimension, so changing it requires a full re-index)
 
 <details>

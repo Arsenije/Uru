@@ -3,9 +3,10 @@ import {
 	Notice,
 	Platform,
 	Plugin,
+	TFile,
 	WorkspaceLeaf,
 } from "obsidian";
-import { mkdirSync, realpathSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
@@ -15,7 +16,6 @@ import { runtimeDir, vaultDataDir } from "./src/paths";
 import { SidecarManager } from "./src/sidecar/manager";
 import type { SidecarClient, HealthResponse } from "./src/sidecar/client";
 import { Indexer, type IndexStatus } from "./src/indexing/indexer";
-import { GraphLinker, type LinkStatus } from "./src/graph/linker";
 import { RecallView, URU_RECALL_VIEW } from "./src/views/recallView";
 import { ChatView, URU_CHAT_VIEW } from "./src/views/chatView";
 import { SetupModal } from "./src/views/setupModal";
@@ -34,9 +34,6 @@ export default class UruPlugin extends Plugin {
 	settings!: UruSettings;
 	private manager: SidecarManager | null = null;
 	private indexer: Indexer | null = null;
-	private linker: GraphLinker | null = null;
-	private linkStatus: LinkStatus | null = null;
-	private linkStatusListeners = new Set<(s: LinkStatus | null) => void>();
 	private status: HealthResponse["status"] | "uninstalled" = "uninstalled";
 	private statusDetail = "";
 	private statusListeners = new Set<(s: typeof this.status) => void>();
@@ -112,6 +109,7 @@ export default class UruPlugin extends Plugin {
 
 		// First run → guided setup modal; otherwise boot silently in background.
 		this.app.workspace.onLayoutReady(() => {
+			void this.cleanupLegacyUruLinks();
 			if (this.settings.installed) void this.bootSilent();
 			else this.openSetup();
 		});
@@ -204,7 +202,6 @@ export default class UruPlugin extends Plugin {
 			this.manager = null;
 		}
 		this.indexer = null;
-		this.linker = null;
 		try {
 			rmSync(vaultDataDir(this.settings.vaultKey), { recursive: true, force: true });
 			removeVault(this.settings.vaultKey);
@@ -277,7 +274,6 @@ export default class UruPlugin extends Plugin {
 			embedModelPath: b.embedModelPath,
 			embeddingDimension: b.embeddingDimension,
 			namespaceId: this.settings.namespaceId,
-			extractEntities: this.settings.extractEntities,
 			lockPath: join(vaultDir, "uru-sidecar.lock"),
 		});
 		this.manager.onStatus((s, d) => this.setStatus(s, d));
@@ -304,14 +300,6 @@ export default class UruPlugin extends Plugin {
 		// indexer exists, so its gate saw an indexed count of 0. Now that the store
 		// is loaded, re-emit the current status so those views re-evaluate the gate.
 		this.setIndexStatus(this.indexStatus);
-		this.linker = new GraphLinker(
-			this.app,
-			() => this.client(),
-			this.settings,
-			join(vaultDir, "graph-links.json"),
-			(s) => this.setLinkStatus(s),
-		);
-		this.linker.load();
 		if (this.settings.autoIndexOnStartup) {
 			void this.reindex(false); // auto-index resumes and clears the flag itself
 		} else if (this.settings.indexInterrupted) {
@@ -386,66 +374,59 @@ export default class UruPlugin extends Plugin {
 		this.indexer?.stop();
 	}
 
-	// ---- graph linking ---------------------------------------------------
-
-	/** True while a link/unlink pass is running. */
-	isLinking(): boolean {
-		return this.linker?.isRunning ?? false;
-	}
-
-	/** Notes currently carrying Uru links (from the ledger). */
-	graphLinkedCount(): number {
-		return this.linker?.linkedCount() ?? 0;
-	}
-
-	/** Epoch ms of the last completed link pass, or null. */
-	graphLastLinkedAt(): number | null {
-		return this.linker?.lastLinkedAt() ?? null;
-	}
-
-	/** Subscribe to link-status changes; fires immediately with the current status. */
-	onLinkStatus(cb: (s: LinkStatus | null) => void): () => void {
-		this.linkStatusListeners.add(cb);
-		cb(this.linkStatus);
-		return () => this.linkStatusListeners.delete(cb);
-	}
-
-	stopLinking(): void {
-		this.linker?.stop();
-	}
-
-	/** Compute + write related-note links into note frontmatter (a change operation). */
-	async linkGraph(): Promise<void> {
-		if (!this.linker || !this.backendReady()) {
-			new Notice("Uru isn't ready yet — one moment…");
-			return;
+	/**
+	 * One-time migration for the removed graph-linking feature: strip the
+	 * "uru-links" frontmatter property it wrote into notes. Gated on the old
+	 * ledger file (graph-links.json), which only ever existed for vaults that ran
+	 * "Link notes" — everyone else pays nothing. Removes the ledger afterwards so
+	 * this never runs twice. Unions the ledger with a live frontmatter scan, same
+	 * as the old "Remove Uru links" undo, so it's complete even if the ledger is
+	 * stale.
+	 */
+	private async cleanupLegacyUruLinks(): Promise<void> {
+		const PROP = "uru-links";
+		if (!this.settings.vaultKey) return;
+		const ledgerPath = join(vaultDataDir(this.settings.vaultKey), "graph-links.json");
+		if (!existsSync(ledgerPath)) return;
+		try {
+			const paths = new Set<string>();
+			try {
+				const d = JSON.parse(readFileSync(ledgerPath, "utf8"));
+				if (Array.isArray(d?.paths)) for (const p of d.paths) paths.add(p);
+			} catch {
+				/* corrupt ledger — the scan below still finds every linked note */
+			}
+			for (const f of this.app.vault.getMarkdownFiles()) {
+				const fm = this.app.metadataCache.getFileCache(f)?.frontmatter;
+				if (fm && PROP in fm) paths.add(f.path);
+			}
+			let cleaned = 0;
+			for (const path of paths) {
+				const file = this.app.vault.getAbstractFileByPath(path);
+				if (!(file instanceof TFile)) continue;
+				try {
+					await this.app.fileManager.processFrontMatter(file, (fm) => {
+						if (PROP in fm) {
+							delete fm[PROP];
+							cleaned++;
+						}
+					});
+				} catch (e) {
+					console.warn(`[Uru] failed to remove ${PROP} from ${path}:`, e);
+				}
+			}
+			rmSync(ledgerPath, { force: true });
+			rmSync(`${ledgerPath}.tmp`, { force: true });
+			if (cleaned > 0) {
+				new Notice(
+					`Uru: the "link notes in the graph" feature was removed — cleaned its ` +
+						`"${PROP}" property from ${cleaned} ${cleaned === 1 ? "note" : "notes"}.`,
+					8000,
+				);
+			}
+		} catch (e) {
+			console.warn("[Uru] uru-links cleanup failed:", e);
 		}
-		if (this.isIndexing()) {
-			new Notice("Uru: finish indexing first, then link the graph.");
-			return;
-		}
-		if (this.isLinking()) {
-			new Notice("Uru is already working on the graph");
-			return;
-		}
-		await this.linker.link();
-	}
-
-	/** Remove every Uru link from the vault's frontmatter (undo). */
-	async unlinkGraph(): Promise<void> {
-		if (!this.linker) {
-			new Notice("Uru isn't ready yet — one moment…");
-			return;
-		}
-		if (this.isIndexing()) {
-			new Notice("Uru: finish indexing first.");
-			return;
-		}
-		if (this.isLinking()) {
-			new Notice("Uru is already working on the graph");
-			return;
-		}
-		await this.linker.unlink();
 	}
 
 	async runSetup(): Promise<void> {
@@ -504,18 +485,6 @@ export default class UruPlugin extends Plugin {
 		this.setIndexStatus(null);
 	}
 
-	/**
-	 * Set the Deep/Quick indexing mode (Deep = full knowledge-graph extraction).
-	 * The sidecar reads this once at start, so if the running backend differs we
-	 * restart it to pick up the new mode before any (re)index. No-op if unchanged.
-	 */
-	async applyIndexingMode(deep: boolean): Promise<void> {
-		if (this.settings.extractEntities === deep) return;
-		this.settings.extractEntities = deep;
-		await this.saveSettings();
-		await this.restartBackend();
-	}
-
 	private async openRecall(): Promise<void> {
 		const existing = this.app.workspace.getLeavesOfType(URU_RECALL_VIEW);
 		let leaf: WorkspaceLeaf;
@@ -563,24 +532,11 @@ export default class UruPlugin extends Plugin {
 		for (const cb of this.indexStatusListeners) cb(s);
 	}
 
-	private setLinkStatus(s: LinkStatus | null): void {
-		this.linkStatus = s;
-		this.renderStatusBar();
-		for (const cb of this.linkStatusListeners) cb(s);
-	}
-
 	private renderStatusBar(): void {
 		if (this.indexStatus) {
 			const { done, total, current } = this.indexStatus;
 			this.statusBar.setText(`Uru ⏳ ${done}/${total}`);
 			this.statusBar.title = `Uru: indexing ${current}\n(run "Uru: Stop indexing" to cancel)`;
-			return;
-		}
-		if (this.linkStatus) {
-			const { phase, done, total } = this.linkStatus;
-			const verb = phase === "remove" ? "removing links" : "linking";
-			this.statusBar.setText(`Uru 🔗 ${done}/${total}`);
-			this.statusBar.title = `Uru: ${verb}`;
 			return;
 		}
 		const icon = this.status === "ok" ? "✓" : this.status === "error" ? "✕" : "…";

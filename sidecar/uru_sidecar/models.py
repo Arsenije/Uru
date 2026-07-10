@@ -29,20 +29,6 @@ class BatchRequest(BaseModel):
     documents: list[BatchDocument]
 
 
-class LinkRequest(BaseModel):
-    """Compute related-note links (semantic + lexical) for the whole corpus.
-
-    The plugin sends every note's text; the sidecar embeds + BM25s them and
-    returns per-note neighbours. Thresholds default to the calibrated values in
-    linking.py; leaving them None uses those defaults.
-    """
-
-    documents: list[BatchDocument]
-    k: int | None = None
-    min_cos: float | None = None
-    min_bm25: float | None = None
-
-
 class ForgetRequest(BaseModel):
     external_id: str | None = None
     document_id: str | None = None

@@ -1,7 +1,7 @@
 {
 	"name": "uru",
 	"version": "0.1.9",
-	"description": "Knowledge graph + vector search for your vault, powered by khora.",
+	"description": "Private, offline AI search and chat for your vault, powered by khora.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
@@ -15,7 +15,7 @@
 	"keywords": [
 		"obsidian",
 		"plugin",
-		"knowledge-graph"
+		"semantic-search"
 	],
 	"author": "Arsenije",
 	"license": "MIT",

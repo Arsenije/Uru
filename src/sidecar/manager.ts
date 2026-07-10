@@ -15,7 +15,6 @@ export interface SidecarLaunchSpec {
 	embedModelPath: string;
 	embeddingDimension: number;
 	namespaceId: string | null;
-	extractEntities: boolean;
 	/** Path for the single-instance lockfile. */
 	lockPath: string;
 }
@@ -88,7 +87,6 @@ export class SidecarManager {
 			"--idle-timeout", "120",
 		];
 		if (this.spec.namespaceId) args.push("--namespace-id", this.spec.namespaceId);
-		if (!this.spec.extractEntities) args.push("--no-extract-entities");
 
 		this.emit("starting", "launching backend");
 		// POSIX detached: the sidecar leads its own process group, so killing -pid

@@ -163,12 +163,10 @@ export class Indexer {
 				}
 			}
 
-			// Changed/new notes only (content-hash gate), plus notes whose
-			// extraction mode changed (Lite ↔ Full). khora dedups by content
+			// Changed/new notes only (content-hash gate). khora dedups by content
 			// checksum and skips already-COMPLETED docs, so re-sending a note with
-			// unchanged content is a no-op — to genuinely re-extract we drop the
-			// existing doc first (forgetFirst) so khora re-ingests it from scratch.
-			const mode = this.settings.extractEntities;
+			// unchanged content is a no-op — a forced re-index drops the existing
+			// doc first (forgetFirst) so khora re-ingests it from scratch.
 			const docs: Array<{ doc: BatchDocument; forgetFirst: boolean }> = [];
 			for (const file of files) {
 				const doc = await this.toDocument(file);
@@ -176,11 +174,8 @@ export class Indexer {
 				const h = doc.metadata!.hash as string;
 				const known = this.store.get(file.path);
 				const contentSame = known?.hash === h;
-				// Legacy entries (mode undefined) are treated as matching, so an
-				// upgrade doesn't trigger a surprise full re-extraction.
-				const modeSame = known?.extractEntities === undefined || known.extractEntities === mode;
-				if (!force && contentSame && modeSame) continue;
-				const forgetFirst = !!known && contentSame && (force || !modeSame);
+				if (!force && contentSame) continue;
+				const forgetFirst = !!known && contentSame && force;
 				docs.push({ doc, forgetFirst });
 			}
 
@@ -208,7 +203,6 @@ export class Indexer {
 						hash: doc.metadata!.hash as string,
 						docId: res.document_id,
 						lastIndexed: Date.now(),
-						extractEntities: mode,
 					});
 				} catch (e) {
 					failed++;
@@ -329,7 +323,6 @@ export class Indexer {
 				hash: h,
 				docId: res.document_id,
 				lastIndexed: Date.now(),
-				extractEntities: this.settings.extractEntities,
 			});
 			await this.store.save();
 		} catch {

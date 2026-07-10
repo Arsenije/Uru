@@ -119,18 +119,6 @@ export class RecallView extends ItemView {
 	private render(result: RecallResult): void {
 		this.resultsEl.empty();
 
-		if (result.entities.length) {
-			const ent = this.resultsEl.createDiv({ cls: "uru-recall-entities" });
-			ent.createEl("div", { cls: "uru-recall-section", text: "People & topics" });
-			const chips = ent.createDiv({ cls: "uru-recall-chips" });
-			for (const e of result.entities.slice(0, 12)) {
-				chips.createEl("span", {
-					cls: "uru-recall-chip",
-					text: `${e.name} · ${e.entity_type.toLowerCase()}`,
-				});
-			}
-		}
-
 		// Group chunks by their source note (external_id).
 		const byDoc = new Map<string, { title: string; score: number; snippets: string[] }>();
 		const docById = new Map(result.documents.map((d) => [d.id, d]));

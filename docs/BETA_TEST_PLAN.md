@@ -19,8 +19,8 @@ Architecture / entry points:
 
 ### Already validated (don't re-litigate, but regression-check)
 - On **macOS arm64**, against **khora 0.21.0 from PyPI** + the llama.cpp `b9838`
-  `llama-server` binary: smoke (remember/recall/forget), chat (vault + current-note
-  scope), and entity extraction all pass.
+  `llama-server` binary: smoke (remember/recall/forget) and chat (vault +
+  current-note scope) all pass.
 
 ### NOT validated (this is the point of the plan)
 1. The **end-to-end bootstrap has never run through Obsidian** — only its pieces
@@ -43,16 +43,15 @@ exist. Test on a machine/user account **without** those, or temporarily rename t
 1. Build + package: `bash scripts/package.sh` → `dist/uru-v<ver>.zip`. Confirm it
    contains only `main.js, manifest.json, styles.css, sidecar/` (no `.venv/.models`).
 2. Extract into a throwaway vault's `.obsidian/plugins/uru/`, enable in Obsidian.
-3. **Setup modal** appears → pick **Lite** → Install & start. Watch the progress log.
+3. **Setup modal** appears → Install & start. Watch the progress log.
    - Pass: `uv` downloads; Python 3.13 installs; venv builds; `khora==0.21.0` +
      `uru_sidecar` install **from wheels (no C/C++ compiler invoked)**; the
      llama.cpp binary downloads + extracts + runs; models (~3 GB) download; status
      bar reaches **`Uru ✓`**. No step requires a preinstalled toolchain.
 4. Index a few notes; run recall + chat → correct, with clickable citations.
-5. Repeat with **Full** mode → entities/relationships are extracted (not 0).
-6. **Update simulation:** re-extract a newer zip over the plugin folder, reload →
+5. **Update simulation:** re-extract a newer zip over the plugin folder, reload →
    the db/index in app-data **survive** (no re-index, no re-download).
-7. **`Uru: Delete all Uru data`** → app-data removed; re-run setup reinstalls cleanly.
+6. **`Uru: Delete all Uru data`** → app-data removed; re-run setup reinstalls cleanly.
 
 If you can't run Obsidian, approximate steps 3 by replicating `ensureBackend` in a
 Node harness (call `uvAsset()`/`llamaAsset()` for this platform, `download`,
@@ -77,16 +76,14 @@ khora 0.21.0 source** (in the venv `site-packages/khora`) and verify every call 
 sidecar makes still matches — the smoke path won't catch drift in less-used calls:
 - `lifecycle.py`: `Khora(run_migrations=True)`, `connect`, `create_namespace()`,
   `get_namespace_by_stable_id`, `recall(query, namespace=, limit=, min_similarity=)`,
-  `remember(content, namespace=, title=, external_id=, metadata=, entity_types=, relationship_types=)`,
+  `remember(content, namespace=, title=, external_id=, metadata=)`,
   `forget(document_id, namespace=)`, `health_check`.
 - The **forget-by-external_id** path reaches into internals:
   `kb._engine._storage.get_document_by_external_id(external_id, namespace_id=ns.id)`.
   Confirm `_engine._storage` and that method/signature still exist in 0.21.0 — this
   is the most fragile call. Test `/forget` with only an `external_id` (no doc id).
-- The json_schema monkeypatch: `LLMEntityExtractor.MODELS_REQUIRING_JSON_SCHEMA`
-  must still exist; if renamed, extraction silently degrades to 0 entities.
 - `RecallResult` shape used in `serialize.py` (`chunks[].document_id`,
-  `documents[].id/.external_id`, `entities[].name/.entity_type`).
+  `documents[].id/.external_id`).
 
 ---
 
@@ -102,7 +99,7 @@ Run from `sidecar/` with a venv + the cached binary/models:
 - **Lifecycle robustness:** start two sidecars on the same db (lockfile takeover);
   let the plugin idle > 120s with no heartbeat → sidecar self-exits (idle watchdog
   in `__main__.py`); crash a `llama-server` child → sidecar restarts it.
-- **Concurrency/timeout:** confirm extraction is serialized (`KHORA_LLM_MAX_CONCURRENT_LLM_CALLS=1`)
+- **Concurrency/timeout:** confirm LLM calls are serialized (`KHORA_LLM_MAX_CONCURRENT_LLM_CALLS=1`)
   and the 300s timeout holds — a large note must complete, not retry-storm.
 
 ## P1 — Security surface
@@ -117,13 +114,13 @@ Run from `sidecar/` with a venv + the cached binary/models:
 
 ## P2 — Quality & adversarial (LLM is good at this)
 
-- **Diverse corpus:** generate notes that stress extraction — huge notes, empty/
+- **Diverse corpus:** generate notes that stress indexing — huge notes, empty/
   whitespace, frontmatter-only, heavy code blocks, tables, non-English/unicode,
-  emoji, notes that are just links. Confirm no crash and reasonable extraction.
+  emoji, notes that are just links. Confirm no crash and reasonable chunking.
 - **Paths with spaces/unicode** in the vault path and note paths (→ `external_id`):
   index + recall + citation-open round-trip must work.
-- **Extraction quality (LLM-as-judge):** index a known corpus, recall N queries,
-  judge precision/relevance of chunks + entities. Compare Lite vs Full.
+- **Recall quality (LLM-as-judge):** index a known corpus, recall N queries,
+  judge precision/relevance of the returned chunks.
 - **Embedding-dimension trap:** changing the embed model mid-vault → confirm the
   guardrail/behavior (dimension is baked into LanceDB; mismatch should be caught or
   documented, not silently corrupt).
