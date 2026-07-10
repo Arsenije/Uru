@@ -91,12 +91,21 @@ export class SidecarManager {
 		if (!this.spec.extractEntities) args.push("--no-extract-entities");
 
 		this.emit("starting", "launching backend");
-		// detached: the sidecar leads its own process group, so killing -pid takes
-		// down the sidecar AND its llama.cpp children together (no orphans).
+		// POSIX detached: the sidecar leads its own process group, so killing -pid
+		// takes down the sidecar AND its llama.cpp children together (no orphans).
+		// On Windows detached does nothing useful here (killTree shells out to
+		// taskkill /T, not a group kill) AND it forces python.exe to own no
+		// console, so its console-subsystem llama children each pop a cmd window;
+		// worse, windowsHide has never worked alongside detached. So: not detached
+		// on Windows, windowsHide instead (a no-op on POSIX). The llama children's
+		// own windows are separately suppressed via CREATE_NO_WINDOW in llama.py,
+		// and their lifetime is bound by a kill-on-close Job Object there.
+		const isWin = process.platform === "win32";
 		this.proc = spawn(this.spec.pythonPath, args, {
 			cwd: this.spec.cwd,
 			env: { ...process.env, URU_TOKEN: this.token, PYTHONPATH: this.spec.cwd },
-			detached: true,
+			detached: !isWin,
+			windowsHide: true,
 		});
 		this.writeLock();
 		this.wireProcessEvents();
@@ -110,8 +119,9 @@ export class SidecarManager {
 	private static killTree(pid: number, signal: NodeJS.Signals): void {
 		if (process.platform === "win32") {
 			// No process groups on Windows; taskkill walks the tree (/T).
+			// windowsHide keeps taskkill.exe from flashing its own console window.
 			try {
-				spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
+				spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
 			} catch {
 				/* already gone */
 			}

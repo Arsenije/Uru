@@ -113,7 +113,7 @@ export function detectGpuWindows(): GpuVendor {
 				"-Command",
 				"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
 			],
-			{ encoding: "utf8", timeout: 5000 },
+			{ encoding: "utf8", timeout: 5000, windowsHide: true },
 		);
 		if (res.status !== 0 || !res.stdout) return "none";
 		return parseWindowsAdapters(res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
