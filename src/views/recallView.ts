@@ -22,7 +22,7 @@ export class RecallView extends ItemView {
 		return URU_RECALL_VIEW;
 	}
 	getDisplayText(): string {
-		return "Uru recall";
+		return "Uru Search";
 	}
 	getIcon(): string {
 		return "search";
@@ -42,7 +42,7 @@ export class RecallView extends ItemView {
 		this.input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter") void this.run();
 		});
-		bar.createEl("button", { text: "Recall" }).addEventListener("click", () => void this.run());
+		bar.createEl("button", { text: "Search" }).addEventListener("click", () => void this.run());
 
 		this.resultsEl = root.createDiv({ cls: "uru-recall-results" });
 
@@ -66,7 +66,7 @@ export class RecallView extends ItemView {
 			const box = this.resultsEl.createDiv({ cls: "uru-recall-status" });
 			box.setText(
 				this.plugin.statusDetailText ||
-					"The local backend didn't come up. Try again, or check Uru's settings.",
+					"Uru couldn't start. Give it another try or check the settings.",
 			);
 			box
 				.createEl("button", { cls: "mod-cta", text: "Retry" })
@@ -77,9 +77,9 @@ export class RecallView extends ItemView {
 			if (this.gateMode === "loading") return;
 			this.gateMode = "loading";
 			this.input.disabled = true;
-			this.input.placeholder = "Starting Uru…";
+			this.input.placeholder = "Uru is starting up…";
 			this.resultsEl.empty();
-			this.resultsEl.createDiv({ cls: "uru-recall-status", text: "Starting Uru…" });
+			this.resultsEl.createDiv({ cls: "uru-recall-status", text: "Uru is starting up…" });
 			return;
 		}
 		// Ready: re-enable the box. Clear the banner if one was showing, but leave
@@ -102,7 +102,7 @@ export class RecallView extends ItemView {
 		if (!query) return;
 		const client = this.plugin.client();
 		if (!client) {
-			new Notice("Uru isn't ready yet — one moment…");
+			new Notice("Uru is still starting — one moment…");
 			return;
 		}
 		this.resultsEl.empty();
@@ -112,7 +112,7 @@ export class RecallView extends ItemView {
 			this.render(result);
 		} catch (e) {
 			this.resultsEl.empty();
-			this.resultsEl.createDiv({ cls: "uru-recall-status", text: `Error: ${(e as Error).message}` });
+			this.resultsEl.createDiv({ cls: "uru-recall-status", text: `Couldn't search — ${(e as Error).message}` });
 		}
 	}
 
@@ -146,7 +146,6 @@ export class RecallView extends ItemView {
 			const item = list.createDiv({ cls: "uru-recall-item" });
 			const head = item.createDiv({ cls: "uru-recall-item-head" });
 			const link = head.createEl("a", { cls: "uru-recall-title", text: group.title });
-			head.createEl("span", { cls: "uru-recall-score", text: group.score.toFixed(2) });
 			link.addEventListener("click", () => {
 				void this.plugin.app.workspace.openLinkText(path, "", false);
 			});

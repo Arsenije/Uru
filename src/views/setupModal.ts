@@ -49,7 +49,7 @@ export class SetupModal extends Modal {
 						new Notice("Uru is ready.");
 						this.close();
 					} catch (e) {
-						append(`\nERROR: ${(e as Error).message}`);
+						append(`\nError: ${(e as Error).message}`);
 						this.installing = false;
 						b.setDisabled(false).setButtonText("Retry");
 						buttons.addButton((c) =>

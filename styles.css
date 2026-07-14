@@ -31,10 +31,6 @@
 .uru-recall-title:hover {
 	text-decoration: underline;
 }
-.uru-recall-score {
-	color: var(--text-faint);
-	font-size: var(--font-ui-smaller);
-}
 .uru-recall-snippet {
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);

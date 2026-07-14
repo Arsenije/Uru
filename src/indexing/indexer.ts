@@ -142,11 +142,11 @@ export class Indexer {
 	async fullIndex(force = false): Promise<boolean> {
 		const client = this.client();
 		if (!client) {
-			new Notice("Uru isn't ready yet — one moment…");
+			new Notice("Uru is still starting — one moment…");
 			return false;
 		}
 		if (this.indexing) {
-			new Notice("Uru is already indexing");
+			new Notice("Uru is already indexing.");
 			return false;
 		}
 		this.indexing = true;
@@ -180,7 +180,7 @@ export class Indexer {
 			}
 
 			if (docs.length === 0) {
-				new Notice("Uru: everything indexed");
+				new Notice("Uru finished indexing your vault.");
 				return true;
 			}
 
@@ -215,13 +215,14 @@ export class Indexer {
 			await this.store.save();
 			new Notice(
 				stopped
-					? `Uru: stopped at ${done}/${docs.length}`
-					: `Uru: indexed ${done - failed}/${docs.length} notes` +
-							(failed ? ` (${failed} failed)` : ""),
+					? `Stopped at ${done}/${docs.length}.`
+					: `Indexed ${done - failed}/${docs.length} notes` +
+							(failed ? ` (${failed} failed)` : "") +
+							".",
 			);
 			return !stopped;
 		} catch (e) {
-			new Notice(`Uru: index failed — ${(e as Error).message}`);
+			new Notice(`Indexing failed — ${(e as Error).message}`);
 			return false;
 		} finally {
 			this.indexing = false;

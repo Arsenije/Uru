@@ -51,12 +51,12 @@ export default class UruPlugin extends Plugin {
 
 		this.registerView(URU_RECALL_VIEW, (leaf: WorkspaceLeaf) => new RecallView(leaf, this));
 		this.registerView(URU_CHAT_VIEW, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
-		this.addRibbonIcon("search", "Uru: recall", () => void this.openRecall());
-		this.addRibbonIcon("message-square", "Uru: chat", () => void this.openChat());
+		this.addRibbonIcon("search", "Uru Search", () => void this.openRecall());
+		this.addRibbonIcon("message-square", "Uru Chat", () => void this.openChat());
 
 		this.addCommand({
 			id: "uru-recall",
-			name: "Recall from your vault",
+			name: "Search in your vault",
 			callback: () => void this.openRecall(),
 		});
 		this.addCommand({
@@ -71,7 +71,7 @@ export default class UruPlugin extends Plugin {
 		});
 		this.addCommand({
 			id: "uru-force-reindex",
-			name: "Force re-index (all notes)",
+			name: "Re-index all notes",
 			callback: () => void this.reindex(true),
 		});
 		this.addCommand({
@@ -90,14 +90,14 @@ export default class UruPlugin extends Plugin {
 				const active = this.indexer?.isIndexing ?? false;
 				if (active && !checking) {
 					this.indexer?.stop();
-					new Notice("Uru: stopping after the current note…");
+					new Notice("Stopping after the current note…");
 				}
 				return active;
 			},
 		});
 		this.addCommand({
 			id: "uru-restart-backend",
-			name: "Restart backend",
+			name: "Restart Uru",
 			callback: () => void this.restartBackend(),
 		});
 
@@ -137,7 +137,7 @@ export default class UruPlugin extends Plugin {
 
 	/** Resolve the backend, start the sidecar, wire indexing. Throws on failure. */
 	async runBackend(onLog: (s: string) => void): Promise<void> {
-		this.setStatus("starting", "resolving backend");
+		this.setStatus("starting", "getting ready");
 		if (!this.settings.vaultKey) {
 			this.settings.vaultKey = randomUUID();
 			await this.saveSettings();
@@ -160,7 +160,7 @@ export default class UruPlugin extends Plugin {
 			await this.runBackend((l) => this.setStatus("starting", l));
 		} catch (e) {
 			this.setStatus("error", (e as Error).message);
-			new Notice(`Uru couldn't start: ${(e as Error).message}`);
+			new Notice(`Uru couldn't start — ${(e as Error).message}`);
 		}
 	}
 
@@ -225,7 +225,7 @@ export default class UruPlugin extends Plugin {
 					// orphaned by past reinstalls so nothing is left behind on disk.
 					pruneOrphanVaultData();
 				} else {
-					new Notice("Uru: another vault started using Uru — kept the shared backend.");
+					new Notice("Another vault started using Uru — kept the shared local AI service.");
 				}
 			}
 
@@ -233,14 +233,14 @@ export default class UruPlugin extends Plugin {
 			this.setStatus("uninstalled", deletedRuntime ? "data deleted" : "vault reset");
 			new Notice(
 				deletedRuntime
-					? "Uru: all data deleted (models, Python environment, and this vault's index). " +
-							"You can now safely remove the Uru plugin from Community plugins — nothing is left behind."
-					: "Uru: this vault's data was reset. The shared backend was kept — re-run indexing " +
+					? "All Uru data deleted — models, Python environment, and this vault's index. " +
+							"It's now safe to uninstall the Uru plugin from Community plugins; nothing is left behind."
+					: "This vault's Uru data was reset. The shared local AI service was kept — re-run indexing " +
 							"or setup to continue using Uru here.",
 				8000,
 			);
 		} catch (e) {
-			new Notice(`Uru: cleanup failed — ${(e as Error).message}`);
+			new Notice(`Cleanup failed — ${(e as Error).message}`);
 		}
 	}
 
@@ -304,7 +304,7 @@ export default class UruPlugin extends Plugin {
 			void this.reindex(false); // auto-index resumes and clears the flag itself
 		} else if (this.settings.indexInterrupted) {
 			// Nudge only — never auto-run. Resume via the button, command, or chat.
-			new Notice('Uru: indexing didn\'t finish. Run "Resume indexing" to continue.', 8000);
+			new Notice('Indexing didn\'t finish. Run "Resume indexing" to continue.', 8000);
 		}
 	}
 
@@ -315,7 +315,15 @@ export default class UruPlugin extends Plugin {
 	}
 
 	statusText(): string {
-		return `${this.status}${this.statusDetail ? ` — ${this.statusDetail}` : ""}`;
+		const label =
+			this.status === "ok"
+				? "Ready"
+				: this.status === "starting"
+					? "Starting…"
+					: this.status === "error"
+						? "Something went wrong"
+						: "Not set up";
+		return `${label}${this.statusDetail ? ` — ${this.statusDetail}` : ""}`;
 	}
 
 	/** Raw backend state, for rendering a friendly status label (no detail/UUID). */
@@ -329,7 +337,7 @@ export default class UruPlugin extends Plugin {
 	}
 
 	diagnostics(): string {
-		return this.manager?.diagnostics ?? "(backend not started)";
+		return this.manager?.diagnostics ?? "(not started)";
 	}
 
 	/** Number of notes currently tracked as indexed. */
@@ -419,7 +427,7 @@ export default class UruPlugin extends Plugin {
 			rmSync(`${ledgerPath}.tmp`, { force: true });
 			if (cleaned > 0) {
 				new Notice(
-					`Uru: the "link notes in the graph" feature was removed — cleaned its ` +
+					`Removed the "link notes in the graph" feature — cleaned its ` +
 						`"${PROP}" property from ${cleaned} ${cleaned === 1 ? "note" : "notes"}.`,
 					8000,
 				);
@@ -442,14 +450,14 @@ export default class UruPlugin extends Plugin {
 	/** Run a full index. force=true re-sends every note, ignoring the hash gate. */
 	async reindex(force = false): Promise<void> {
 		if (!this.indexer) {
-			new Notice("Uru isn't ready yet — one moment…");
+			new Notice("Uru is still starting — one moment…");
 			return;
 		}
 		// A run already owns the interrupted flag and the progress UI — don't let a
 		// concurrent call (e.g. auto-index-on-startup + a manual click) stamp state
 		// or fire an idle tick that would hide the live progress.
 		if (this.isIndexing()) {
-			new Notice("Uru is already indexing");
+			new Notice("Uru is already indexing.");
 			return;
 		}
 		this.indexer.recompileIgnore();

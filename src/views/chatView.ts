@@ -34,7 +34,7 @@ export class ChatView extends ItemView {
 		return URU_CHAT_VIEW;
 	}
 	getDisplayText(): string {
-		return "Uru chat";
+		return "Uru Chat";
 	}
 	getIcon(): string {
 		return "message-square";
@@ -160,15 +160,15 @@ export class ChatView extends ItemView {
 	private renderStartingState(): void {
 		if (this.gateMode === "loading") return; // already showing — don't restart the animation
 		this.gateMode = "loading";
-		this.setComposerEnabled(false, "Starting Uru…");
+		this.setComposerEnabled(false, "Uru is starting up…");
 		this.messagesEl.empty();
 		this.progressFill = this.progressLabel = null;
 		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
 		this.emptyEl = box;
-		box.createEl("div", { cls: "uru-empty-title", text: "Starting Uru…" });
+		box.createEl("div", { cls: "uru-empty-title", text: "Uru is starting up…" });
 		box.createEl("p", {
 			cls: "uru-empty-copy",
-			text: "Uru is starting its local AI backend — this can take a moment on first launch.",
+			text: "Uru is starting up — this can take a moment on first launch.",
 		});
 		const action = box.createDiv({ cls: "uru-empty-action" });
 		this.renderProgress(action, null); // indeterminate "Starting…" bar
@@ -186,7 +186,7 @@ export class ChatView extends ItemView {
 		box.createEl("div", { cls: "uru-empty-title", text: "Uru couldn't start" });
 		box.createEl("p", {
 			cls: "uru-empty-copy",
-			text: detail || "The local backend didn't come up. Try again, or check Uru's settings.",
+			text: detail || "Uru couldn't start. Give it another try or check the settings.",
 		});
 		const action = box.createDiv({ cls: "uru-empty-action" });
 		action
@@ -290,7 +290,7 @@ export class ChatView extends ItemView {
 		if (!query || this.busy || this.input.disabled) return;
 		const client = this.plugin.client();
 		if (!client) {
-			new Notice("Uru isn't ready yet — one moment…");
+			new Notice("Uru is still starting — one moment…");
 			return;
 		}
 
@@ -337,13 +337,13 @@ export class ChatView extends ItemView {
 
 			// Final render: markdown body + clickable sources.
 			answerEl.empty();
-			await MarkdownRenderer.render(this.plugin.app, answer || "(no answer)", answerEl, "", this);
+			await MarkdownRenderer.render(this.plugin.app, answer || "No answer — try rephrasing.", answerEl, "", this);
 			this.renderCitations(answerEl, citations);
 
 			this.history.push({ role: "user", content: query });
 			this.history.push({ role: "assistant", content: answer });
 		} catch (e) {
-			answerEl.setText(`Error: ${(e as Error).message}`);
+			answerEl.setText(`Couldn't get an answer — ${(e as Error).message}`);
 		} finally {
 			this.busy = false;
 			this.messagesEl.scrollTop = this.messagesEl.scrollHeight;

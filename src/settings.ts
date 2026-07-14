@@ -88,7 +88,7 @@ export class UruSettingTab extends PluginSettingTab {
 			.addButton((b) =>
 				b.setButtonText("Copy diagnostics").onClick(async () => {
 					await navigator.clipboard.writeText(this.plugin.diagnostics());
-					new Notice("Uru diagnostics copied to clipboard");
+					new Notice("Diagnostics copied");
 				}),
 			);
 
@@ -104,7 +104,7 @@ export class UruSettingTab extends PluginSettingTab {
 			.addButton((b) => {
 				indexBtn = b
 					.setCta()
-					.setButtonText("Index new & changed")
+					.setButtonText("Index new & edited")
 					.setTooltip("Index notes added or edited since the last run")
 					.onClick(() => void this.plugin.reindex(false));
 			})
@@ -121,7 +121,7 @@ export class UruSettingTab extends PluginSettingTab {
 					.setTooltip("Stop after the current note finishes")
 					.onClick(() => {
 						this.plugin.stopIndexing();
-						new Notice("Uru: stopping after the current note…");
+						new Notice("Stopping after the current note…");
 					});
 			});
 
@@ -156,10 +156,10 @@ export class UruSettingTab extends PluginSettingTab {
 				// Idle: drive the primary button + interrupted notice off the persisted
 				// flag, so both revert automatically after a clean resume completes.
 				const interrupted = this.plugin.settings.indexInterrupted;
-				indexBtn.setButtonText(interrupted ? "Resume indexing" : "Index new & changed");
+				indexBtn.setButtonText(interrupted ? "Resume indexing" : "Index new & edited");
 				indexBtn.setTooltip(
 					interrupted
-						? "Finish the notes left from the interrupted run"
+						? "Finish indexing the notes left from the interrupted run"
 						: "Index notes added or edited since the last run",
 				);
 				interruptedEl.setText(interrupted ? this.interruptedText() : "");
@@ -176,7 +176,7 @@ export class UruSettingTab extends PluginSettingTab {
 
 		new Setting(advanced)
 			.setName("Index on startup")
-			.setDesc("Check for new and changed notes automatically each time Obsidian starts.")
+			.setDesc("Check for new and edited notes automatically each time Obsidian starts.")
 			.addToggle((t) =>
 				t.setValue(s.autoIndexOnStartup).onChange(async (v) => {
 					s.autoIndexOnStartup = v;
@@ -215,8 +215,7 @@ export class UruSettingTab extends PluginSettingTab {
 		new Setting(models)
 			.setName("Embedding model")
 			.setDesc(
-				`${this.modelName(s.embedModelPath)} · ${s.embeddingDimension} dimensions. ` +
-					"Changing this needs a full re-index.",
+				`${this.modelName(s.embedModelPath)} · ${s.embeddingDimension} dimensions.`,
 			)
 			.setDisabled(true);
 
@@ -225,12 +224,12 @@ export class UruSettingTab extends PluginSettingTab {
 		danger.createEl("summary", { text: "Danger zone" });
 
 		if (!s.vaultKey) {
-			new Setting(danger).setName("Nothing to clean up yet").setDesc("Run setup first.");
+			new Setting(danger).setName("Nothing to uninstall yet").setDesc("Set up Uru first.");
 		} else {
 			new Setting(danger)
 				.setName("Reset this vault's Uru data")
 				.setDesc(
-					"Deletes this vault's index and database. The shared backend " +
+					"Deletes this vault's index and database. The shared local AI service " +
 						"(Python environment, models) is kept.",
 				)
 				.addButton((b) =>
@@ -242,12 +241,12 @@ export class UruSettingTab extends PluginSettingTab {
 
 			let removeAllBtn!: ButtonComponent;
 			const removeAllSetting = new Setting(danger)
-				.setName("Remove Uru completely")
+				.setName("Uninstall Uru")
 				.setDesc("Checking other vaults…")
 				.addButton((b) => {
 					removeAllBtn = b
 						.setWarning()
-						.setButtonText("Remove everything")
+						.setButtonText("Uninstall")
 						.onClick(() => void this.confirmDelete("vault-and-runtime"));
 				});
 			void this.plugin.deleteDataPreflight().then(({ otherVaults }) => {
@@ -308,15 +307,15 @@ export class UruSettingTab extends PluginSettingTab {
 	/** Description for the "Remove Uru completely" row, based on registry lookup. */
 	private removeAllDesc(otherVaults: VaultRegistryEntry[] | "unknown"): string {
 		if (otherVaults === "unknown") {
-			return "Uru couldn't confirm whether other vaults still use this — the confirm " +
-				"dialog will ask you to double-check.";
+			return "Uru couldn't check whether other vaults still use the local AI service — " +
+				"you'll be asked to confirm before anything is deleted.";
 		}
 		if (otherVaults.length > 0) {
 			const names = otherVaults.map((v) => v.vaultName).join(", ");
 			return `Unavailable — Uru is also used in: ${names}. Use "Reset this vault's Uru data" ` +
 				"instead, then remove the plugin from just this vault.";
 		}
-		return "Deletes the shared backend (Python environment + AI models, several GB) plus " +
+		return "Deletes the shared local AI service (Python environment + AI models, several GB) plus " +
 			"this vault's data. Do this before removing the plugin from Community plugins.";
 	}
 
@@ -326,27 +325,27 @@ export class UruSettingTab extends PluginSettingTab {
 		if (scope === "vault-only") {
 			message = [
 				"This deletes this vault's index and database.",
-				"The shared backend (Python environment, models) is kept.",
+				"The shared local AI service (Python environment, models) is kept.",
 			];
 		} else {
 			const { otherVaults } = await this.plugin.deleteDataPreflight();
 			message =
 				otherVaults === "unknown"
 					? [
-							"Uru couldn't confirm whether any other vault still uses the shared backend.",
+							"Uru couldn't check whether another vault still uses the local AI service.",
 							"Only continue if you're sure no other vault has Uru installed.",
-							"This deletes the shared Python environment and AI models (several GB) plus this vault's data.",
+							"This removes the local AI service (Python environment + AI models, several GB) and this vault's data.",
 						]
 					: [
-							"This deletes the shared backend (Python environment + AI models, several GB) " +
+							"This uninstalls the local AI service (Python environment + AI models, several GB) " +
 								"plus this vault's data.",
 							"After this finishes, it's safe to remove the Uru plugin from Community plugins.",
 						];
 		}
 		new ConfirmModal(this.app, {
-			title: scope === "vault-only" ? "Reset this vault's Uru data?" : "Remove Uru completely?",
+			title: scope === "vault-only" ? "Reset this vault's Uru data?" : "Uninstall Uru?",
 			message,
-			confirmText: scope === "vault-only" ? "Reset this vault" : "Delete everything",
+			confirmText: scope === "vault-only" ? "Reset this vault" : "Uninstall",
 			onConfirm: async () => {
 				await this.plugin.deleteData(scope);
 				this.display();
