@@ -276,3 +276,4 @@ class LlamaServer:
             self._proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             self._proc.kill()
+            self._proc.wait()  # reap — otherwise the child lingers as a zombie

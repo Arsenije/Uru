@@ -107,7 +107,16 @@ class SidecarRuntime:
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         )
         self._proxy_task = asyncio.create_task(self._proxy_server.serve())
+        # Waiting on `started` alone can hang forever: if serve() raises (e.g.
+        # the free_port() TOCTOU lost the port), the exception sits unobserved
+        # in the task and boot stays in "starting" with nothing to clean it up.
+        deadline = time.monotonic() + 15.0
         while not self._proxy_server.started:
+            if self._proxy_task.done():
+                self._proxy_task.result()  # re-raises the bind/startup error
+                raise RuntimeError("proxy server exited before startup")
+            if time.monotonic() > deadline:
+                raise RuntimeError("proxy server failed to start within 15s")
             await asyncio.sleep(0.05)
         return f"http://127.0.0.1:{port}/v1"
 

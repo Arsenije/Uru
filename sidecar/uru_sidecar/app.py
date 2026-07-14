@@ -48,8 +48,13 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
     async def _track_activity(request, call_next):
         runtime.touch()  # any request resets the idle watchdog
         # /health fires every ~15s from the plugin heartbeat; counting it would
-        # pin inflight>0 forever and defeat genuine idle shutdown. Real work
-        # (remember/recall/chat) is guarded so a long note can't be killed mid-flight.
+        # pin inflight>0 forever and defeat genuine idle shutdown.
+        #
+        # Scope caveat: with BaseHTTPMiddleware, call_next returns once response
+        # HEADERS exist — a StreamingResponse body runs *after* the finally
+        # below. So this middleware only guards non-streaming routes; the
+        # streaming endpoints (/chat with stream=true, /index/full) take the
+        # in-flight guard inside their own body generators.
         if request.url.path == "/health":
             return await call_next(request)
         runtime.begin_request()
@@ -101,8 +106,17 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
             return await runtime.chat_once(req.query, history, req.limit, note)
 
         async def stream():
-            async for ev in runtime.chat_stream(req.query, history, req.limit, note):
-                yield json.dumps(ev) + "\n"
+            # Guard inside the generator, not the endpoint: the middleware's
+            # inflight pair closes at response headers, and a generator that is
+            # never iterated never runs its finally — endpoint-level begin would
+            # leak inflight forever if the client vanished before the body ran.
+            runtime.begin_request()
+            try:
+                async for ev in runtime.chat_stream(req.query, history, req.limit, note):
+                    yield json.dumps(ev) + "\n"
+            finally:
+                runtime.touch()
+                runtime.end_request()
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 
@@ -141,6 +155,8 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
                 await queue.put(None)
 
         async def stream():
+            # In-flight guard lives in the generator — see /chat for why.
+            runtime.begin_request()
             task = asyncio.create_task(run())
             try:
                 while True:
@@ -151,6 +167,8 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
             finally:
                 if not task.done():
                     task.cancel()
+                runtime.touch()
+                runtime.end_request()
 
         return StreamingResponse(stream(), media_type="application/x-ndjson")
 

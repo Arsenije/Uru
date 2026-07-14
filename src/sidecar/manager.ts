@@ -59,6 +59,9 @@ export class SidecarManager {
 	private proc: ChildProcess | null = null;
 	private port = 0;
 	private token = "";
+	/** Set when spawn itself fails (binary gone, EACCES) — exitCode stays null
+	 *  in that case, so awaitReady needs this to fail fast instead of timing out. */
+	private spawnError: Error | null = null;
 	private stoppedByUs = false;
 	private restartAttempts = 0;
 	private stderrRing: string[] = [];
@@ -84,6 +87,7 @@ export class SidecarManager {
 	async start(): Promise<HealthResponse> {
 		await this.takeOverExisting(); // kill any prior sidecar group from a stale lock
 		this.stoppedByUs = false;
+		this.spawnError = null;
 		this.port = await pickPort();
 		this.token = randomUUID();
 		this.client = new SidecarClient(`http://127.0.0.1:${this.port}`, this.token);
@@ -313,6 +317,13 @@ export class SidecarManager {
 		};
 		this.proc?.stdout?.on("data", capture);
 		this.proc?.stderr?.on("data", capture);
+		// Without this handler a failed spawn throws an *uncaught* error event in
+		// the renderer, and awaitReady spins for the full timeout (exitCode never
+		// leaves null when the process never started).
+		this.proc?.on("error", (e) => {
+			this.spawnError = e;
+			this.stderrRing.push(`[manager] failed to launch backend: ${e.message}`);
+		});
 		const pid = this.proc?.pid;
 		this.proc?.on("exit", (code, sig) => {
 			// An uncleaned death (OOM SIGKILL, native crash) can leave the llama
@@ -336,6 +347,9 @@ export class SidecarManager {
 	private async awaitReady(): Promise<HealthResponse> {
 		const deadline = Date.now() + READY_TIMEOUT_MS;
 		while (Date.now() < deadline) {
+			if (this.spawnError) {
+				throw new Error(`The local AI service couldn't launch — ${this.spawnError.message}`);
+			}
 			if (!this.proc || this.proc.exitCode !== null) {
 				throw new Error(`The local AI service stopped during startup:\n${this.diagnostics}`);
 			}
