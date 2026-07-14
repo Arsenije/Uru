@@ -11,6 +11,7 @@ import {
 	type GpuVendor,
 	type LlamaVariant,
 } from "./gpu";
+import sidecarFiles from "virtual:sidecar-files";
 
 export interface BackendPaths {
 	pythonPath: string;
@@ -22,7 +23,12 @@ export interface BackendPaths {
 }
 
 export interface BootstrapContext {
-	/** Bundled sidecar source (`<pluginDir>/sidecar`) — also holds dev .venv/.models. */
+	/**
+	 * Repo sidecar dir (`<pluginDir>/sidecar`) — exists only in dev, where the
+	 * plugin dir links to the repo; it holds the dev .venv/.models fast path.
+	 * Production installs ship no such folder: the sidecar source is embedded
+	 * in main.js (virtual:sidecar-files) and staged into app-data at install.
+	 */
 	pluginSidecarDir: string;
 	/** Shared app-data runtime (uv, venv, models, llama.cpp). */
 	runtimeDir: string;
@@ -198,6 +204,23 @@ function llamaAsset(gpu: GpuVendor): string {
 }
 
 // ---- component bootstrappers -------------------------------------------
+
+/**
+ * Materialize the embedded sidecar source (bundled into main.js — a
+ * community-directory install ships no sidecar/ folder) into app-data so uv
+ * can pip-install it. Rebuilt from scratch on every (re)install so a file
+ * removed from the package can't linger from a previous plugin version.
+ */
+function stageSidecarSource(runtimeDir: string): string {
+	const dir = join(runtimeDir, "sidecar-src");
+	rmSync(dir, { recursive: true, force: true });
+	for (const [rel, contents] of Object.entries(sidecarFiles)) {
+		const dest = join(dir, ...rel.split("/"));
+		mkdirSync(dirname(dest), { recursive: true });
+		writeFileSync(dest, contents);
+	}
+	return dir;
+}
 
 async function ensureUv(runtimeDir: string, log: (s: string) => void): Promise<string> {
 	const local = join(runtimeDir, "uv", exe("uv"));
@@ -395,7 +418,7 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 		// would hard-fail on it, while an unknown env var is simply ignored.
 		await run(
 			uv,
-			["pip", "install", "--python", py, "--force-reinstall", pluginSidecarDir],
+			["pip", "install", "--python", py, "--force-reinstall", stageSidecarSource(runtimeDir)],
 			{ env: { ...env, UV_TORCH_BACKEND: "cpu" } },
 			log,
 		);

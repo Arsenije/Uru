@@ -1,7 +1,7 @@
 {
 	"name": "uru",
 	"version": "0.1.10",
-	"description": "Private, offline AI search and chat for your vault, powered by Khora.",
+	"description": "Search and chat with your vault using local AI — private, offline, powered by Khora.",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",

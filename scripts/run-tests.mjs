@@ -7,6 +7,7 @@ import { spawnSync } from "child_process";
 import { mkdirSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
 import { readKhoraPin } from "./khora-pin.mjs";
+import { sidecarEmbedPlugin } from "./sidecar-embed.mjs";
 
 const TEST_DIR = "tests";
 const OUT_DIR = ".test-build";
@@ -35,6 +36,9 @@ await esbuild.build({
 		// that consume the build-time khora pin.
 		__KHORA_VERSION__: JSON.stringify(readKhoraPin()),
 	},
+	// Same virtual:sidecar-files module as the real build, so tests can import
+	// modules that consume the embedded sidecar (src/bootstrap/uv.ts).
+	plugins: [sidecarEmbedPlugin()],
 });
 
 const outFiles = readdirSync(OUT_DIR)

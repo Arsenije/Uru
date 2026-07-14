@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Ready for Obsidian's community plugin directory.** The Python sidecar now travels *inside* `main.js` (embedded at build time) instead of shipping as a separate `sidecar/` folder — so an install that receives only `main.js`, `manifest.json`, and `styles.css` (exactly what Obsidian's community-directory installer downloads) bootstraps correctly. First-run setup writes the embedded source into Uru's app-data folder and installs it from there; nothing changes for already-set-up vaults.
+- **Release mechanics match Obsidian's requirements.** Releases are now tagged with the bare version (`0.1.11`, not `v0.1.11`) to match `manifest.json` exactly, and `main.js`, `manifest.json`, and `styles.css` are attached to each release as individual assets (the community installer fetches those files directly). The manual-install zip remains, renamed to `uru-<version>.zip` and no longer containing a `sidecar/` folder.
+- **Manifest polish for review.** `minAppVersion` raised from the sample-plugin template's `0.15.0` to `1.5.0`, the description now leads with what Uru does ("Search and chat with your vault…"), and `authorUrl` points at the author's GitHub profile.
+
+### Added
+- **LICENSE file** (MIT) at the repo root — the README and package metadata already said MIT; now GitHub and Obsidian's review tooling can see it too.
+
 ## [0.1.10] — 2026-07-14
 
 ### Changed
