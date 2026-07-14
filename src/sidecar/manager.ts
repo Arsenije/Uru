@@ -32,7 +32,7 @@ const RESTART_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 function execCapture(cmd: string, args: string[]): Promise<string> {
 	return new Promise((resolve, reject) => {
 		execFile(cmd, args, { encoding: "utf8", windowsHide: true }, (err, stdout) =>
-			err ? reject(err) : resolve(stdout),
+			err ? reject(err instanceof Error ? err : new Error(String(err))) : resolve(stdout),
 		);
 	});
 }
@@ -66,7 +66,7 @@ export class SidecarManager {
 	private restartAttempts = 0;
 	private stderrRing: string[] = [];
 	private listeners: StatusListener[] = [];
-	private heartbeat: ReturnType<typeof setInterval> | null = null;
+	private heartbeat: number | null = null;
 	client: SidecarClient | null = null;
 
 	constructor(private spec: SidecarLaunchSpec) {}
@@ -142,7 +142,7 @@ export class SidecarManager {
 				this.stoppedByUs = true;
 				this.killGroup("SIGTERM");
 				const proc = this.proc;
-				setTimeout(() => {
+				window.setTimeout(() => {
 					if (proc.exitCode === null && proc.pid) {
 						SidecarManager.killTree(proc.pid, "SIGKILL");
 					}
@@ -289,7 +289,7 @@ export class SidecarManager {
 		// Keeps the sidecar's idle watchdog from self-terminating us, and reflects
 		// the sidecar's real health (e.g. a crashed llama child the OS-level
 		// process-exit handler can't see) onto the status bar.
-		this.heartbeat = setInterval(() => void this.pollHealth(), 15_000);
+		this.heartbeat = window.setInterval(() => void this.pollHealth(), 15_000);
 	}
 
 	private async pollHealth(): Promise<void> {
@@ -304,7 +304,7 @@ export class SidecarManager {
 
 	private stopHeartbeat(): void {
 		if (this.heartbeat) {
-			clearInterval(this.heartbeat);
+			window.clearInterval(this.heartbeat);
 			this.heartbeat = null;
 		}
 	}
@@ -411,14 +411,14 @@ export class SidecarManager {
 			// courtesy. If Windows' bounded race above already worked, this
 			// taskkill lands on a dead pid — harmless.)
 			this.killGroup("SIGTERM");
-			const timer = setTimeout(() => this.killGroup("SIGKILL"), 4_000);
+			const timer = window.setTimeout(() => this.killGroup("SIGKILL"), 4_000);
 			// Best-effort courtesy so khora gets a clean disconnect if there's time;
 			// client.shutdown() already swallows its own errors, and the sidecar's
 			// lifespan shutdown handler no-ops a second stop() if SIGTERM's already
 			// triggered one.
 			if (process.platform !== "win32") void this.client?.shutdown();
 			await exited;
-			clearTimeout(timer);
+			window.clearTimeout(timer);
 		} else if (this.client) {
 			await this.client.shutdown();
 		}
@@ -445,5 +445,5 @@ export class SidecarManager {
 }
 
 function sleep(ms: number): Promise<void> {
-	return new Promise((r) => setTimeout(r, ms));
+	return new Promise((r) => window.setTimeout(r, ms));
 }

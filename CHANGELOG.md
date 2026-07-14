@@ -5,6 +5,16 @@ All notable changes to Uru are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] — 2026-07-14
+
+### Fixed
+- **Obsidian plugin-review error resolved.** `workspace.revealLeaf()` (available since Obsidian 1.7.2) is now awaited, and `minAppVersion` is raised from `1.5.0` to `1.7.2` to match the APIs the plugin actually uses.
+- **Review warnings addressed.** `onunload` is synchronous again (shutdown runs fire-and-forget in the same order); timers use `window.setTimeout`/`setInterval` so they behave in popout windows; the default ignore list derives the config folder from `vault.configDir` instead of hardcoding `.obsidian`; a settings status callback no longer leaks a return value; a child-process failure now rejects with a proper `Error`.
+
+### Changed
+- **Releases are attested and minimal.** The release workflow now publishes GitHub artifact attestations for `main.js`, `manifest.json`, and `styles.css` (verify with `gh attestation verify main.js -R Arsenije/Uru`), and the extra `uru-<version>.zip` asset is gone — manual installs download the same three files the community installer fetches (see the README).
+- The `builtin-modules` dev dependency was replaced with Node's own `module.builtinModules` in the build config.
+
 ## [0.1.11] — 2026-07-14
 
 ### Changed

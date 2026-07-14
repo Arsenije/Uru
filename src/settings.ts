@@ -45,7 +45,9 @@ export const DEFAULT_SETTINGS: UruSettings = {
 	embeddingDimension: 1024, // mxbai-embed-large-v1
 	vaultKey: "",
 	namespaceId: null,
-	ignoreGlobs: [".obsidian/**", ".trash/**", "templates/**"],
+	// Placeholder — loadSettings overlays defaultIgnoreGlobs(app), since the
+	// config folder is user-relocatable and only known once the vault is open.
+	ignoreGlobs: [],
 	includeFrontmatter: false,
 	autoIndexOnStartup: false,
 	lastIndexedAt: null,
@@ -53,6 +55,12 @@ export const DEFAULT_SETTINGS: UruSettings = {
 	indexRemaining: null,
 	dbPath: "",
 };
+
+/** Default ignore globs, resolved against the vault's actual config folder
+ *  (users can rename `.obsidian`, so it can't be a static literal). */
+export function defaultIgnoreGlobs(app: App): string[] {
+	return [`${app.vault.configDir}/**`, ".trash/**", "templates/**"];
+}
 
 /** Deep links into the README sections explaining each model choice. */
 const MODEL_DOCS = {
@@ -105,9 +113,9 @@ export class UruSettingTab extends PluginSettingTab {
 		// the row stays on "Setting up…" until the tab is reopened. onBackendStatus fires
 		// immediately and on every change; we only refresh the desc (no re-render) so
 		// setup-progress ticks update smoothly without rebuilding the page.
-		this.unsubscribeStatus = this.plugin.onBackendStatus(() =>
-			statusRow.setDesc(this.statusLabel()),
-		);
+		this.unsubscribeStatus = this.plugin.onBackendStatus(() => {
+			statusRow.setDesc(this.statusLabel());
+		});
 
 		// ---- Indexing (action first, then options) -------------------------
 		new Setting(containerEl).setName("Indexing").setHeading();

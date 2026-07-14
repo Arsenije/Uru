@@ -1,6 +1,6 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from "builtin-modules";
+import { builtinModules } from "node:module";
 import { readKhoraPin } from "./scripts/khora-pin.mjs";
 import { sidecarEmbedPlugin } from "./scripts/sidecar-embed.mjs";
 
@@ -32,7 +32,8 @@ const context = await esbuild.context({
 		"@lezer/common",
 		"@lezer/highlight",
 		"@lezer/lr",
-		...builtins,
+		...builtinModules,
+		...builtinModules.map((m) => `node:${m}`),
 	],
 	define: {
 		// Injected from sidecar/pyproject.toml so the plugin's staleness gate

@@ -1,13 +1,17 @@
 name: Release
 
 # Obsidian's community-plugin installer requires the release tag to EXACTLY
-# match manifest.json's version — no "v" prefix. Tag releases as e.g. "0.1.11".
+# match manifest.json's version — no "v" prefix. Tag releases as e.g. "0.1.12".
 on:
   push:
     tags: ["[0-9]+.[0-9]+.[0-9]+"]
 
+# id-token + attestations let attest-build-provenance sign the release assets
+# so users (and Obsidian's review tooling) can verify they were built here.
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   release:
@@ -29,16 +33,13 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
-      - name: Stage plugin bundle
-        run: |
-          set -e
-          # The Python sidecar is embedded inside main.js (scripts/sidecar-embed.mjs),
-          # so the plugin is exactly the three files Obsidian's installer fetches.
-          mkdir -p dist/uru
-          cp main.js manifest.json styles.css dist/uru/
-          cp scripts/verify-staging.mjs dist/uru/
-          (cd dist && zip -r "uru-${GITHUB_REF_NAME}.zip" uru)
-          ls -la dist
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
       - name: Build release notes from CHANGELOG.md
         run: |
           set -e
@@ -53,17 +54,17 @@ jobs:
           # when the changelog has no matching section).
           {
             printf '\n---\n\n'
-            printf '**Manual install:** download the **`uru-%s.zip`** asset below — ⚠️ **not** "Source code (zip)", which has no built `main.js` and will fail to load. Extract the `uru/` folder into `<your-vault>/.obsidian/plugins/`, then enable Uru in Settings → Community plugins. First run downloads the local backend (~3 GB) — see the setup dialog.\n' "$GITHUB_REF_NAME"
+            printf '**Manual install:** download **`main.js`**, **`manifest.json`**, and **`styles.css`** below — ⚠️ **not** "Source code (zip)", which has no built `main.js` and will fail to load. Put them in `<your-vault>/.obsidian/plugins/uru/`, then enable Uru in Settings → Community plugins. First run downloads the local backend (~3 GB) — see the setup dialog.\n'
           } >> notes.md
           echo '----- release notes -----'; cat notes.md
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          # main.js, manifest.json, and styles.css must be attached as individual
-          # assets — Obsidian's installer downloads those exact files, never the zip.
+          # Exactly the three files Obsidian's installer fetches — the Python
+          # sidecar is embedded inside main.js (scripts/sidecar-embed.mjs), and
+          # extra assets get flagged by the plugin review as unsupported files.
           files: |
             main.js
             manifest.json
             styles.css
-            dist/uru-*.zip
           body_path: notes.md
