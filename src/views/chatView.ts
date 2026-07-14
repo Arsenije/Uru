@@ -34,7 +34,7 @@ export class ChatView extends ItemView {
 		return URU_CHAT_VIEW;
 	}
 	getDisplayText(): string {
-		return "Uru Chat";
+		return "Uru chat";
 	}
 	getIcon(): string {
 		return "message-square";
@@ -250,7 +250,7 @@ export class ChatView extends ItemView {
 		if (!this.progressFill || !this.progressLabel) return;
 		this.progressFill.parentElement?.removeClass("is-indeterminate");
 		const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
-		this.progressFill.style.width = `${pct}%`;
+		this.progressFill.style.setProperty("--uru-progress", `${pct}%`);
 		const eta = etaSeconds(status);
 		const suffix = eta !== null ? ` · ${formatEta(eta)}` : "…";
 		this.progressLabel.setText(`Indexing ${status.done}/${status.total}${suffix}`);

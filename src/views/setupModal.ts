@@ -19,7 +19,7 @@ export class SetupModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Set up Uru" });
+		this.setTitle("Set up Uru");
 		contentEl.createEl("p", {
 			text:
 				"Uru adds AI-powered search to your vault — everything runs locally on your " +

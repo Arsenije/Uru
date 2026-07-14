@@ -57,31 +57,33 @@ export default class UruPlugin extends Plugin {
 
 		this.registerView(URU_RECALL_VIEW, (leaf: WorkspaceLeaf) => new RecallView(leaf, this));
 		this.registerView(URU_CHAT_VIEW, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
-		this.addRibbonIcon("search", "Uru Search", () => void this.openRecall());
-		this.addRibbonIcon("message-square", "Uru Chat", () => void this.openChat());
+		this.addRibbonIcon("search", "Uru search", () => void this.openRecall());
+		this.addRibbonIcon("message-square", "Uru chat", () => void this.openChat());
 
+		// Command ids are NOT prefixed with the plugin id — Obsidian already
+		// namespaces them (`uru:recall`).
 		this.addCommand({
-			id: "uru-recall",
+			id: "recall",
 			name: "Search in your vault",
 			callback: () => void this.openRecall(),
 		});
 		this.addCommand({
-			id: "uru-chat",
+			id: "chat",
 			name: "Chat with your vault",
 			callback: () => void this.openChat(),
 		});
 		this.addCommand({
-			id: "uru-index-vault",
+			id: "index-vault",
 			name: "Index vault",
 			callback: () => this.indexVault(),
 		});
 		this.addCommand({
-			id: "uru-force-reindex",
+			id: "force-reindex",
 			name: "Re-index all notes",
 			callback: () => void this.reindex(true),
 		});
 		this.addCommand({
-			id: "uru-resume-indexing",
+			id: "resume-indexing",
 			name: "Resume indexing",
 			checkCallback: (checking) => {
 				const canResume = this.settings.indexInterrupted && !this.isIndexing();
@@ -90,7 +92,7 @@ export default class UruPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
-			id: "uru-stop-indexing",
+			id: "stop-indexing",
 			name: "Stop indexing",
 			checkCallback: (checking) => {
 				const active = this.indexer?.isIndexing ?? false;
@@ -102,8 +104,8 @@ export default class UruPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
-			id: "uru-restart-backend",
-			name: "Restart Uru",
+			id: "restart-backend",
+			name: "Restart the local AI service",
 			callback: () => void this.restartBackend(),
 		});
 

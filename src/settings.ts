@@ -161,7 +161,7 @@ export class UruSettingTab extends PluginSettingTab {
 			if (status) {
 				interruptedEl.toggle(false);
 				const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
-				fill.style.width = `${pct}%`;
+				fill.style.setProperty("--uru-progress", `${pct}%`);
 				const eta = etaSeconds(status);
 				const etaTxt = eta !== null ? ` · ${formatEta(eta)}` : "";
 				countEl.setText(

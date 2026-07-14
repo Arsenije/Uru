@@ -168,7 +168,8 @@
 }
 .uru-progress-fill {
 	height: 100%;
-	width: 0;
+	/* Driven by JS via a custom property (no inline width styles). */
+	width: var(--uru-progress, 0%);
 	background: var(--interactive-accent);
 	transition: width 0.2s ease;
 }
@@ -197,7 +198,8 @@
 }
 .uru-index-progress-fill {
 	height: 100%;
-	width: 0%;
+	/* Driven by JS via a custom property (no inline width styles). */
+	width: var(--uru-progress, 0%);
 	background: var(--interactive-accent);
 	transition: width 0.2s ease;
 }
