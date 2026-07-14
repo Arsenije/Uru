@@ -190,7 +190,7 @@ Khora is a pure-Python library, so the plugin drives it through a small local **
 
 ### The chat model
 
-Uru answers your questions with **`Qwen2.5-3B-Instruct`**, from Alibaba's Qwen team, downloaded as a quantized GGUF from Hugging Face. It's the model behind the **chat** panel: given the passages Uru retrieves from your vault, it writes the answer and the `[1]`, `[2]` citations back to your notes.
+Uru answers your questions with **[`Qwen2.5-3B-Instruct`](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct)**, from [Alibaba's Qwen team](https://huggingface.co/Alibaba-NLP), downloaded as a [quantized GGUF from Hugging Face](https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF). It's the model behind the **chat** panel: given the passages Uru retrieves from your vault, it writes the answer and the `[1]`, `[2]` citations back to your notes.
 
 Why this one:
 - **Small enough to run locally.** At 3B parameters it fits in a few GB of RAM and runs on a laptop CPU (and much faster on Apple Silicon / a supported GPU) — no cloud, no API key.
@@ -201,7 +201,7 @@ The model runs entirely on your machine through llama.cpp; nothing you type or r
 
 ### The embedding model
 
-Search and retrieval are powered by **`bge-m3`**, from BAAI (Beijing Academy of Artificial Intelligence), also a quantized GGUF (`Q8_0`) from Hugging Face. Every note you index is turned into a numeric vector by this model; a search embeds your query the same way and finds the passages whose vectors are closest — that's what makes search *semantic* rather than keyword.
+Search and retrieval are powered by **[`bge-m3`](https://huggingface.co/BAAI/bge-m3)**, from [BAAI (Beijing Academy of Artificial Intelligence)](https://huggingface.co/BAAI), also a [quantized GGUF (`Q8_0`) from Hugging Face](https://huggingface.co/lm-kit/bge-m3-gguf). Every note you index is turned into a numeric vector by this model; a search embeds your query the same way and finds the passages whose vectors are closest — that's what makes search *semantic* rather than keyword.
 
 Why this one:
 - **Built for retrieval.** `bge-m3` is a dedicated embedding model with strong retrieval quality, so "find what I mean" works even when your wording doesn't match the note's.
