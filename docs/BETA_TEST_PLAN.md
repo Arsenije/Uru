@@ -107,8 +107,9 @@ Run from `sidecar/` with a venv + the cached binary/models:
 - The control API binds **127.0.0.1 only** and requires a **Bearer token** (random
   per launch) on all routes except `/health`. Confirm another local process can't
   drive `/remember`/`/recall` without the token.
-- CORS is `allow_origins=["*"]` (for Obsidian's fetch). Confirm this can't be abused
-  beyond localhost (it can't reach the port remotely, but sanity-check).
+- CORS is allowlisted to `app://obsidian.md` and the unauthenticated `/health`
+  no longer carries prompt previews. Sanity-check a drive-by web page can't read
+  anything off the local ports (llama + proxy now also require the Bearer token).
 - Models/binaries are downloaded over HTTPS from GitHub/HF; note that uv/llama
   downloads are **not SHA-pinned** yet (P2) — flag if this matters for the threat model.
 
@@ -132,6 +133,22 @@ Run from `sidecar/` with a venv + the cached binary/models:
   `src/sidecar/manager.ts` (process lifecycle), `lifecycle.py` (forget internals).
 
 ---
+
+## Windows verification round (changes shipped code-reviewed but untested on Windows)
+
+The 2026-07 hardening pass touched several Windows-only paths that no Windows
+machine has exercised yet. On the next Windows tester pass, specifically confirm:
+
+- **Stale-lock recovery:** force-quit Obsidian, relaunch — the leftover sidecar
+  is taken over WITHOUT killing any unrelated process (PID ownership is now
+  verified via `Get-CimInstance` before `taskkill`).
+- **Graceful quit:** quit Obsidian mid-index — the sidecar now gets a bounded
+  `/shutdown` (khora flush) before `taskkill /F`; check the db opens cleanly after.
+- **No UI freeze at startup:** GPU detection (PowerShell/WMI) is now async —
+  Obsidian must stay responsive during backend boot, including first setup.
+- **Model names** in Settings → Models show basenames, not full `C:\…` paths.
+- **llama auth:** `LLAMA_API_KEY` env works on the Windows llama.cpp build
+  (unauthenticated request to the llama port → 401), as verified on macOS.
 
 ## How to report
 For each item: state platform, exact steps, expected vs actual, and attach the
