@@ -7,16 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] — 2026-07-14
+
 ### Changed
 - **One consistent voice across every label, notice, and error.** The search feature is now called **Search** everywhere (ribbon, command, and panel — previously "Recall"); user-facing messages say **"the local AI service"** instead of the internal word "backend"; and status-bar tooltips show plain words ("Ready", "Starting…") instead of raw internal state. Notices drop the inconsistent "Uru:" prefix, use consistent punctuation, and no longer duplicate the same message two ways. "Remove Uru completely" is now **"Uninstall Uru"**, the indexing button reads **"Index new & edited"**, and the underlying library is capitalized as **Khora**. Developer-only details (raw relevance scores, all-caps `ERROR:`, "(no answer)") no longer leak into the UI. No behavior changed — only wording.
+- **A clearer, better-organized Settings page.** The Status row is now labelled **"Uru setup"** and its button reads **"Repair Uru"** (was "Re-run setup"). **"Index on startup"** moved up next to the indexing controls it affects, out of the Advanced section. The Models section now links each model to a short **"Why this model?"** explainer in the README, and the **"Uninstall Uru"** description leads with what to do and reads more plainly.
 
 ### Removed
 - **Deep indexing (entity extraction) is gone.** Uru no longer runs a local model over every note to map people, places, and ideas — indexing is now always the fast embeddings-only path (what used to be called "Quick"). The Deep/Quick choice disappears from the chat first-run prompt and Settings, the "People & topics" chips disappear from Search, and indexing a large vault drops from hours to minutes. Search, chat, and citations are unchanged. Notes indexed under Deep mode keep working as-is; no re-index is needed.
 - **"Link notes in the graph" is gone.** The Settings section that wrote a "uru-links" property into your notes' frontmatter (so connections showed in Obsidian's Graph view) has been removed. On the first launch after updating, Uru automatically strips the "uru-links" property from any notes that still carry it — the same clean undo the "Remove Uru links" button performed — and tells you how many notes were cleaned. Your note text and other properties are untouched.
+- **"Reset this vault's Uru data" is gone.** The Danger-zone button that cleared just this vault's index while keeping the shared AI service has been removed — it overlapped confusingly with "Uninstall Uru". To rebuild a vault's index, use **"Re-index everything"**; to remove everything, use **"Uninstall Uru"**.
 
 ### Fixed
 - **No more stray console windows on Windows.** Each local AI server (chat + embedding, and a fresh one on every crash-restart) used to pop up its own `cmd` window because it inherited no console from the backend. The servers now launch with `CREATE_NO_WINDOW`, and first-run setup steps (uv, Python, GPU detection) no longer flash a console either. Windows only — macOS and Linux were never affected.
 - **A crashing backend no longer piles up llama.cpp processes on Windows either.** The Windows backend now runs its llama.cpp servers inside a kill-on-close Job Object, so they shut down with the backend no matter how it dies (matching the Linux behavior added in 0.1.9). Previously a hard crash could leave llama.cpp servers resident and stack more on each restart.
+- **Settings no longer gets stuck on "Setting up…".** While the local AI service was booting, the Settings status row could stay on "Setting up…" until you closed and reopened Settings — even though Uru was already ready. It now updates live to "Ready" the moment the service is up.
 
 ## [0.1.9] — 2026-07-09
 

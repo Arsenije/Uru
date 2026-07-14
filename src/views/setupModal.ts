@@ -4,7 +4,7 @@ import type UruPlugin from "../../main";
 /**
  * First-run setup: consent to the (~3 GB, one-time) local-backend download,
  * then run the bootstrap with live progress. Also reached via Settings →
- * "Re-run setup".
+ * "Repair Uru".
  */
 export class SetupModal extends Modal {
 	private installing = false;

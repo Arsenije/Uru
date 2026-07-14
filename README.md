@@ -139,13 +139,14 @@ backend, so cleanup never deletes another vault's data out from under it.
 **Uninstalling Uru?** It's a two-step process, because Obsidian's plugin remover only deletes
 the plugin's own folder inside your vault — it can't reach outside it:
 
-1. In Obsidian, go to **Settings → Uru → Danger zone → "Remove Uru completely"**. This checks
+1. In Obsidian, go to **Settings → Uru → Danger zone → "Uninstall Uru"**. This checks
    whether any other vault is still using the shared backend and only deletes what's safe —
    the models, Python environment, and this vault's index.
 2. Then remove the plugin as usual from **Settings → Community plugins**.
 
-If Uru is installed in more than one vault, use **"Reset this vault's Uru data"** instead —
-it clears just this vault's index and leaves the shared backend for the other vault(s).
+If Uru is installed in more than one vault, "Uninstall Uru" stays disabled — deleting the shared
+backend would break the other vaults. To stop using Uru in just one vault, disable it there from
+**Settings → Community plugins**; the shared backend stays for the rest.
 
 If you already removed the plugin without doing step 1, see
 [Troubleshooting](#troubleshooting) for how to clean up manually.
@@ -165,7 +166,7 @@ If you already removed the plugin without doing step 1, see
 - **Stuck on "starting" / setup failed** — the setup dialog (and Settings → Uru) has a **Copy diagnostics** button. Paste that when reporting an issue.
 - **`Uru ✕` after it was working** — an inference server may have crashed; Uru restarts it automatically and the badge returns to `Uru ✓`. If it stays red, grab diagnostics.
 - **Indexing is slow** — very large vaults can take a while on CPU-only machines. Run **"Uru: Stop indexing"** any time; the next run resumes where it left off.
-- **Start over** — Settings → Uru → Danger zone → **"Reset this vault's Uru data"** clears this vault's index (keeps the shared backend); re-enable from Settings → Uru → "Re-run setup".
+- **Start over** — to rebuild the index from scratch, use **"Re-index everything"** under Settings → Uru → Indexing. If the local backend itself is misbehaving, **"Repair Uru"** (Settings → Uru → Status) re-runs setup without touching your index.
 - **I already removed the plugin and now have leftover files** — Uru couldn't run any cleanup code, since the plugin is gone. Manually delete the per-OS folder from the [Privacy](#privacy) table (e.g. `~/Library/Application Support/uru` on macOS). This is only safe if you're not using Uru in any other vault — if you are, open `uru/vaults.json` to see which `uru/vaults/<id>` subfolder belongs to which vault (by name/path), delete only the ones you no longer need, and leave `uru/runtime` alone.
 
 ## Changelog
@@ -184,8 +185,31 @@ Obsidian plugin (TypeScript)
 Khora is a pure-Python library, so the plugin drives it through a small local **sidecar**. The sidecar runs two single-model `llama-server` processes — a chat model (used for RAG answers) and an embedding model — behind a one-URL, OpenAI-compatible proxy, then points Khora at them. It supervises those processes and restarts either one if it dies, and idle-shuts-down when you're not using Uru.
 
 **Default models** (~3 GB total):
-- Chat: `Qwen2.5-3B-Instruct` (Q4_K_M GGUF)
-- Embeddings: `bge-m3` (Q8_0 GGUF, 1024-dim, 8192-token context — the dimension fixes the vector dimension, so changing it requires a full re-index)
+- Chat: `Qwen2.5-3B-Instruct` (Q4_K_M GGUF) — see [The chat model](#the-chat-model)
+- Embeddings: `bge-m3` (Q8_0 GGUF, 1024-dim, 8192-token context — the dimension fixes the vector dimension, so changing it requires a full re-index) — see [The embedding model](#the-embedding-model)
+
+### The chat model
+
+Uru answers your questions with **`Qwen2.5-3B-Instruct`**, from Alibaba's Qwen team, downloaded as a quantized GGUF from Hugging Face. It's the model behind the **chat** panel: given the passages Uru retrieves from your vault, it writes the answer and the `[1]`, `[2]` citations back to your notes.
+
+Why this one:
+- **Small enough to run locally.** At 3B parameters it fits in a few GB of RAM and runs on a laptop CPU (and much faster on Apple Silicon / a supported GPU) — no cloud, no API key.
+- **Strong instruction-following for its size.** Qwen2.5-3B holds up well at grounded, "answer only from these passages" RAG prompting, which is exactly what Uru asks of it.
+- **`Q4_K_M` quantization** trades a sliver of quality for roughly half the memory and faster generation — the sweet spot for a resident local model.
+
+The model runs entirely on your machine through llama.cpp; nothing you type or retrieve leaves your computer.
+
+### The embedding model
+
+Search and retrieval are powered by **`bge-m3`**, from BAAI (Beijing Academy of Artificial Intelligence), also a quantized GGUF (`Q8_0`) from Hugging Face. Every note you index is turned into a numeric vector by this model; a search embeds your query the same way and finds the passages whose vectors are closest — that's what makes search *semantic* rather than keyword.
+
+Why this one:
+- **Built for retrieval.** `bge-m3` is a dedicated embedding model with strong retrieval quality, so "find what I mean" works even when your wording doesn't match the note's.
+- **Multilingual** — it embeds many languages into the same space, so a vault isn't limited to English.
+- **Long context (8192 tokens)** lets it embed sizable passages without chopping them into tiny fragments.
+- **1024 dimensions** at `Q8_0` keeps vectors compact while preserving quality. This dimension is *fixed*: it defines the shape of every stored vector, so switching embedding models later requires a full re-index.
+
+Like the chat model, it runs locally via llama.cpp — your notes are never uploaded.
 
 <details>
 <summary><b>Build & develop from source</b></summary>

@@ -27,9 +27,6 @@ import {
 	type VaultRegistryEntry,
 } from "./src/vaultRegistry";
 
-/** What "Danger zone" cleanup removes: just this vault's data, or the shared backend too. */
-export type DeleteScope = "vault-only" | "vault-and-runtime";
-
 export default class UruPlugin extends Plugin {
 	settings!: UruSettings;
 	private manager: SidecarManager | null = null;
@@ -188,14 +185,13 @@ export default class UruPlugin extends Plugin {
 	}
 
 	/**
-	 * Scoped cleanup for the Settings "Danger zone". `vault-only` resets just this
-	 * vault's index/db and leaves the shared backend installed and bootable.
-	 * `vault-and-runtime` also removes the shared uv venv/models/llama.cpp binary —
-	 * it re-checks for other vaults right before doing so, since a vault could start
-	 * sharing the runtime in the moments between the confirm dialog opening and the
-	 * user clicking through it.
+	 * "Uninstall Uru" cleanup from the Settings "Danger zone": removes this vault's
+	 * index/db and, unless another vault still shares it, the uv venv/models/llama.cpp
+	 * binary too. It re-checks for other vaults right before removing the shared runtime,
+	 * since a vault could start sharing it in the moments between the confirm dialog
+	 * opening and the user clicking through it.
 	 */
-	async deleteData(scope: DeleteScope): Promise<void> {
+	async deleteData(): Promise<void> {
 		if (!this.settings.vaultKey) return; // nothing set up yet — avoid rmSync on an empty-keyed path
 		if (this.manager) {
 			await this.manager.stop();
@@ -211,22 +207,20 @@ export default class UruPlugin extends Plugin {
 			this.settings.indexRemaining = null;
 
 			let deletedRuntime = false;
-			if (scope === "vault-and-runtime") {
-				const others = otherActiveVaults(this.settings.vaultKey, this.currentVaultPath());
-				if (others === "unknown" || others.length === 0) {
-					rmSync(runtimeDir(), { recursive: true, force: true });
-					this.settings.installed = false;
-					this.settings.pythonPath = "";
-					this.settings.sidecarCwd = "";
-					this.settings.chatModelPath = "";
-					this.settings.embedModelPath = "";
-					deletedRuntime = true;
-					// No vault references the shared runtime anymore — sweep any data dirs
-					// orphaned by past reinstalls so nothing is left behind on disk.
-					pruneOrphanVaultData();
-				} else {
-					new Notice("Another vault started using Uru — kept the shared local AI service.");
-				}
+			const others = otherActiveVaults(this.settings.vaultKey, this.currentVaultPath());
+			if (others === "unknown" || others.length === 0) {
+				rmSync(runtimeDir(), { recursive: true, force: true });
+				this.settings.installed = false;
+				this.settings.pythonPath = "";
+				this.settings.sidecarCwd = "";
+				this.settings.chatModelPath = "";
+				this.settings.embedModelPath = "";
+				deletedRuntime = true;
+				// No vault references the shared runtime anymore — sweep any data dirs
+				// orphaned by past reinstalls so nothing is left behind on disk.
+				pruneOrphanVaultData();
+			} else {
+				new Notice("Another vault started using Uru — kept the shared local AI service.");
 			}
 
 			await this.saveSettings();
@@ -235,8 +229,8 @@ export default class UruPlugin extends Plugin {
 				deletedRuntime
 					? "All Uru data deleted — models, Python environment, and this vault's index. " +
 							"It's now safe to uninstall the Uru plugin from Community plugins; nothing is left behind."
-					: "This vault's Uru data was reset. The shared local AI service was kept — re-run indexing " +
-							"or setup to continue using Uru here.",
+					: "This vault's Uru data was removed, but the shared local AI service was kept because " +
+							"another vault still uses it. Use \"Repair Uru\" to use Uru here again.",
 				8000,
 			);
 		} catch (e) {

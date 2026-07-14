@@ -1,5 +1,5 @@
 import { App, ButtonComponent, PluginSettingTab, Setting, Notice } from "obsidian";
-import type { default as UruPlugin, DeleteScope } from "../main";
+import type { default as UruPlugin } from "../main";
 import { etaSeconds, formatEta, type IndexStatus } from "./indexing/indexer";
 import { ConfirmModal } from "./views/confirmModal";
 import type { VaultRegistryEntry } from "./vaultRegistry";
@@ -54,9 +54,17 @@ export const DEFAULT_SETTINGS: UruSettings = {
 	dbPath: "",
 };
 
+/** Deep links into the README sections explaining each model choice. */
+const MODEL_DOCS = {
+	chat: "https://github.com/Arsenije/Uru#the-chat-model",
+	embedding: "https://github.com/Arsenije/Uru#the-embedding-model",
+} as const;
+
 export class UruSettingTab extends PluginSettingTab {
 	/** Removes the index-progress subscription while the tab is open. */
 	private unsubscribe: (() => void) | null = null;
+	/** Removes the backend-status subscription that keeps the Status row live. */
+	private unsubscribeStatus: (() => void) | null = null;
 
 	constructor(
 		app: App,
@@ -67,20 +75,22 @@ export class UruSettingTab extends PluginSettingTab {
 
 	display(): void {
 		const { containerEl } = this;
-		// Drop any subscription left from a previous render before rebuilding.
+		// Drop any subscriptions left from a previous render before rebuilding.
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.unsubscribeStatus?.();
+		this.unsubscribeStatus = null;
 		containerEl.empty();
 		const s = this.plugin.settings;
 
 		// ---- Status ---------------------------------------------------------
 		new Setting(containerEl).setName("Status").setHeading();
 
-		new Setting(containerEl)
-			.setName("Uru")
+		const statusRow = new Setting(containerEl)
+			.setName("Uru setup")
 			.setDesc(this.statusLabel())
 			.addButton((b) =>
-				b.setButtonText("Re-run setup").onClick(async () => {
+				b.setButtonText("Repair Uru").onClick(async () => {
 					await this.plugin.runSetup();
 					this.display();
 				}),
@@ -91,6 +101,13 @@ export class UruSettingTab extends PluginSettingTab {
 					new Notice("Diagnostics copied");
 				}),
 			);
+		// Keep the status text live: the sidecar boots asynchronously, so without this
+		// the row stays on "Setting up…" until the tab is reopened. onBackendStatus fires
+		// immediately and on every change; we only refresh the desc (no re-render) so
+		// setup-progress ticks update smoothly without rebuilding the page.
+		this.unsubscribeStatus = this.plugin.onBackendStatus(() =>
+			statusRow.setDesc(this.statusLabel()),
+		);
 
 		// ---- Indexing (action first, then options) -------------------------
 		new Setting(containerEl).setName("Indexing").setHeading();
@@ -170,11 +187,8 @@ export class UruSettingTab extends PluginSettingTab {
 		// onIndexStatus fires immediately with the current status, then on each tick.
 		this.unsubscribe = this.plugin.onIndexStatus(apply);
 
-		// ---- Advanced (collapsed) ------------------------------------------
-		const advanced = containerEl.createEl("details", { cls: "uru-advanced" });
-		advanced.createEl("summary", { text: "Advanced" });
-
-		new Setting(advanced)
+		// "Index on startup" sits with the index action it automates, not in Advanced.
+		new Setting(containerEl)
 			.setName("Index on startup")
 			.setDesc("Check for new and edited notes automatically each time Obsidian starts.")
 			.addToggle((t) =>
@@ -183,6 +197,10 @@ export class UruSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}),
 			);
+
+		// ---- Advanced (collapsed) ------------------------------------------
+		const advanced = containerEl.createEl("details", { cls: "uru-advanced" });
+		advanced.createEl("summary", { text: "Advanced" });
 
 		new Setting(advanced)
 			.setName("Include frontmatter")
@@ -211,13 +229,13 @@ export class UruSettingTab extends PluginSettingTab {
 		new Setting(models)
 			.setName("Chat model")
 			.setDesc(this.modelName(s.chatModelPath))
-			.setDisabled(true);
+			.then((row) => this.addModelLink(row, MODEL_DOCS.chat));
 		new Setting(models)
 			.setName("Embedding model")
 			.setDesc(
 				`${this.modelName(s.embedModelPath)} · ${s.embeddingDimension} dimensions.`,
 			)
-			.setDisabled(true);
+			.then((row) => this.addModelLink(row, MODEL_DOCS.embedding));
 
 		// ---- Danger zone (collapsed) ----------------------------------------
 		const danger = containerEl.createEl("details", { cls: "uru-advanced uru-danger" });
@@ -226,19 +244,6 @@ export class UruSettingTab extends PluginSettingTab {
 		if (!s.vaultKey) {
 			new Setting(danger).setName("Nothing to uninstall yet").setDesc("Set up Uru first.");
 		} else {
-			new Setting(danger)
-				.setName("Reset this vault's Uru data")
-				.setDesc(
-					"Deletes this vault's index and database. The shared local AI service " +
-						"(Python environment, models) is kept.",
-				)
-				.addButton((b) =>
-					b
-						.setWarning()
-						.setButtonText("Reset")
-						.onClick(() => void this.confirmDelete("vault-only")),
-				);
-
 			let removeAllBtn!: ButtonComponent;
 			const removeAllSetting = new Setting(danger)
 				.setName("Uninstall Uru")
@@ -247,7 +252,7 @@ export class UruSettingTab extends PluginSettingTab {
 					removeAllBtn = b
 						.setWarning()
 						.setButtonText("Uninstall")
-						.onClick(() => void this.confirmDelete("vault-and-runtime"));
+						.onClick(() => void this.confirmDelete());
 				});
 			void this.plugin.deleteDataPreflight().then(({ otherVaults }) => {
 				removeAllSetting.setDesc(this.removeAllDesc(otherVaults));
@@ -259,6 +264,8 @@ export class UruSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.unsubscribe?.();
 		this.unsubscribe = null;
+		this.unsubscribeStatus?.();
+		this.unsubscribeStatus = null;
 	}
 
 	/** Plain-language backend status — no raw namespace UUID (kept in diagnostics). */
@@ -270,10 +277,20 @@ export class UruSettingTab extends PluginSettingTab {
 			case "starting":
 				return detail ? `Setting up… ${detail}` : "Setting up…";
 			case "error":
-				return `Something went wrong${detail ? ` — ${detail}` : ""}. Try "Re-run setup", or "Copy diagnostics" for support.`;
+				return `Something went wrong${detail ? ` — ${detail}` : ""}. Try "Repair Uru", or "Copy diagnostics" for support.`;
 			default:
 				return "Not set up yet — run setup to get started.";
 		}
+	}
+
+	/** Append a "Why this model?" link to a (display-only) model row's description. */
+	private addModelLink(row: Setting, href: string): void {
+		row.descEl.createEl("br");
+		row.descEl.createEl("a", {
+			text: "Why this model?",
+			href,
+			attr: { target: "_blank", rel: "noopener" },
+		});
 	}
 
 	/** Friendly model name (basename, sans .gguf) from a full model path. */
@@ -304,7 +321,7 @@ export class UruSettingTab extends PluginSettingTab {
 			"indexing continues in the background.";
 	}
 
-	/** Description for the "Remove Uru completely" row, based on registry lookup. */
+	/** Description for the "Uninstall Uru" row, based on registry lookup. */
 	private removeAllDesc(otherVaults: VaultRegistryEntry[] | "unknown"): string {
 		if (otherVaults === "unknown") {
 			return "Uru couldn't check whether other vaults still use the local AI service — " +
@@ -312,42 +329,35 @@ export class UruSettingTab extends PluginSettingTab {
 		}
 		if (otherVaults.length > 0) {
 			const names = otherVaults.map((v) => v.vaultName).join(", ");
-			return `Unavailable — Uru is also used in: ${names}. Use "Reset this vault's Uru data" ` +
-				"instead, then remove the plugin from just this vault.";
+			return `Unavailable — Uru is also used in: ${names}. Uninstalling would delete the shared ` +
+				"AI service those vaults rely on. To stop using Uru here only, disable it from " +
+				"Community plugins in this vault; the shared service stays for the others.";
 		}
-		return "Deletes the shared local AI service (Python environment + AI models, several GB) plus " +
-			"this vault's data. Do this before removing the plugin from Community plugins.";
+		return "Do this before removing Uru from Community plugins — it deletes the shared local AI " +
+			"service (Python environment + AI models, several GB) and this vault's Uru data.";
 	}
 
-	/** Confirm, then run the scoped delete and refresh the tab. */
-	private async confirmDelete(scope: DeleteScope): Promise<void> {
-		let message: string[];
-		if (scope === "vault-only") {
-			message = [
-				"This deletes this vault's index and database.",
-				"The shared local AI service (Python environment, models) is kept.",
-			];
-		} else {
-			const { otherVaults } = await this.plugin.deleteDataPreflight();
-			message =
-				otherVaults === "unknown"
-					? [
-							"Uru couldn't check whether another vault still uses the local AI service.",
-							"Only continue if you're sure no other vault has Uru installed.",
-							"This removes the local AI service (Python environment + AI models, several GB) and this vault's data.",
-						]
-					: [
-							"This uninstalls the local AI service (Python environment + AI models, several GB) " +
-								"plus this vault's data.",
-							"After this finishes, it's safe to remove the Uru plugin from Community plugins.",
-						];
-		}
+	/** Confirm the uninstall, then run it and refresh the tab. */
+	private async confirmDelete(): Promise<void> {
+		const { otherVaults } = await this.plugin.deleteDataPreflight();
+		const message =
+			otherVaults === "unknown"
+				? [
+						"Uru couldn't check whether another vault still uses the local AI service.",
+						"Only continue if you're sure no other vault has Uru installed.",
+						"This removes the local AI service (Python environment + AI models, several GB) and this vault's data.",
+					]
+				: [
+						"This uninstalls the local AI service (Python environment + AI models, several GB) " +
+							"plus this vault's data.",
+						"After this finishes, it's safe to remove the Uru plugin from Community plugins.",
+					];
 		new ConfirmModal(this.app, {
-			title: scope === "vault-only" ? "Reset this vault's Uru data?" : "Uninstall Uru?",
+			title: "Uninstall Uru?",
 			message,
-			confirmText: scope === "vault-only" ? "Reset this vault" : "Uninstall",
+			confirmText: "Uninstall",
 			onConfirm: async () => {
-				await this.plugin.deleteData(scope);
+				await this.plugin.deleteData();
 				this.display();
 			},
 		}).open();
