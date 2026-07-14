@@ -40,8 +40,9 @@ Architecture / entry points:
 short-circuits if `sidecar/.venv` + `sidecar/.models` + `sidecar/.llamacpp-test`
 exist. Test on a machine/user account **without** those, or temporarily rename them.
 
-1. Build + package: `bash scripts/package.sh` → `dist/uru-v<ver>.zip`. Confirm it
-   contains only `main.js, manifest.json, styles.css, sidecar/` (no `.venv/.models`).
+1. Build + package: `bash scripts/package.sh` → `dist/uru-<ver>.zip`. Confirm it
+   contains only `main.js, manifest.json, styles.css` (the sidecar is embedded in
+   `main.js`; no `.venv/.models`).
 2. Extract into a throwaway vault's `.obsidian/plugins/uru/`, enable in Obsidian.
 3. **Setup modal** appears → Install & start. Watch the progress log.
    - Pass: `uv` downloads; Python 3.13 installs; venv builds; `khora==0.21.0` +

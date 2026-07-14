@@ -4,15 +4,14 @@
  *
  *   node scripts/install-to-vault.mjs "<path-to-vault>"     (or set URU_VAULT)
  *
- * Copies everything the plugin needs at runtime — the bundled main.js,
- * manifest.json, styles.css, AND the Python sidecar package (pyproject.toml +
- * uru_sidecar/*.py), which the first-run bootstrap pip-installs. Run `npm run
+ * Copies everything the plugin needs at runtime — main.js (which carries the
+ * embedded Python sidecar), manifest.json, and styles.css. Run `npm run
  * build` first, or use `npm run install-plugin` which builds then deploys.
  *
  * GUI steps still can't be automated: after this, enable Uru in Obsidian and
  * run first-run setup.
  */
-import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, realpathSync, rmSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 
@@ -41,26 +40,19 @@ if (missing.length) {
 const dest = join(vault, ".obsidian", "plugins", "uru");
 mkdirSync(dest, { recursive: true });
 
-// 1) the bundle + metadata
+// The bundle + metadata. The Python sidecar is embedded inside main.js
+// (scripts/sidecar-embed.mjs), so these three files are the whole plugin —
+// same shape as an Obsidian community-directory install.
 for (const f of rootFiles) copyFileSync(join(repoRoot, f), join(dest, f));
 
-// 2) the Python sidecar package (bootstrap pip-installs it from here).
-//    Recurse so future subpackages are included; skip caches.
-function copyTree(srcDir, dstDir) {
-	mkdirSync(dstDir, { recursive: true });
-	for (const entry of readdirSync(srcDir)) {
-		if (entry === "__pycache__") continue;
-		const src = join(srcDir, entry);
-		const dst = join(dstDir, entry);
-		if (statSync(src).isDirectory()) copyTree(src, dst);
-		else if (entry.endsWith(".py")) copyFileSync(src, dst);
-	}
+// Clean up the sidecar/ folder older deploys copied here; the bootstrap no
+// longer reads it and a stale copy would only mislead debugging. Guard: when
+// the plugin dir is a symlink to this repo (dev setup), dest/sidecar IS the
+// repo's sidecar source — never delete that.
+const staleSidecar = join(dest, "sidecar");
+if (existsSync(staleSidecar) && realpathSync(staleSidecar) !== realpathSync(join(repoRoot, "sidecar"))) {
+	rmSync(staleSidecar, { recursive: true, force: true });
 }
-copyFileSync(join(repoRoot, "sidecar", "pyproject.toml"), (() => {
-	mkdirSync(join(dest, "sidecar"), { recursive: true });
-	return join(dest, "sidecar", "pyproject.toml");
-})());
-copyTree(join(repoRoot, "sidecar", "uru_sidecar"), join(dest, "sidecar", "uru_sidecar"));
 
 console.log(`Installed Uru → ${dest}`);
 console.log("Next (in Obsidian, GUI): Settings → Community plugins → enable Uru, then run first-run setup.");
