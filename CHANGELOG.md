@@ -5,7 +5,7 @@ All notable changes to Uru are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.11] — 2026-07-14
 
 ### Changed
 - **Ready for Obsidian's community plugin directory.** The Python sidecar now travels *inside* `main.js` (embedded at build time) instead of shipping as a separate `sidecar/` folder — so an install that receives only `main.js`, `manifest.json`, and `styles.css` (exactly what Obsidian's community-directory installer downloads) bootstraps correctly. First-run setup writes the embedded source into Uru's app-data folder and installs it from there; nothing changes for already-set-up vaults.
@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **LICENSE file** (MIT) at the repo root — the README and package metadata already said MIT; now GitHub and Obsidian's review tooling can see it too.
+- **"Network use" section in the README** — a table of exactly what the first-run setup downloads, from which hosts, and why; every item version- or revision-pinned. After setup, the plugin only talks to its own sidecar on `127.0.0.1`.
+- **Submission notes for Obsidian reviewers** (`docs/obsidian-submission.md`) — why Uru exists, the technical decisions behind the first-run backend bootstrap, and a policy-compliance checklist.
+
+### Fixed
+- **`versions.json` no longer overpromises compatibility.** Every row claimed `minAppVersion` `0.15.0` (the sample-plugin template default); all rows now say `1.5.0`, matching the manifest.
 
 ## [0.1.10] — 2026-07-14
 
