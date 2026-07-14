@@ -31,13 +31,16 @@ log = logging.getLogger("uru.sidecar")
 def build_app(runtime: SidecarRuntime) -> FastAPI:
     app = FastAPI(title="Uru sidecar")
     # Obsidian's renderer issues a CORS preflight for fetch() with a JSON body +
-    # Authorization header (used by the streaming /index/full call). Allow it —
-    # the Bearer token is the real gate and we only bind 127.0.0.1.
+    # Authorization header (used by the streaming /chat call). Allow exactly
+    # Obsidian's origin and nothing else: with a "*" wildcard, any web page open
+    # in a browser could scan 127.0.0.1 ports and read the unauthenticated
+    # /health response cross-origin. The Bearer token still gates every other
+    # route; this closes the one that has no token.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=["app://obsidian.md"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["authorization", "content-type"],
     )
     token = runtime.config.token
 
@@ -65,7 +68,15 @@ def build_app(runtime: SidecarRuntime) -> FastAPI:
 
     @app.get("/health")
     async def health() -> dict:
-        return await runtime.health()
+        payload = await runtime.health()
+        # /health is deliberately unauthenticated (the plugin's readiness probe),
+        # so it must never carry note content. The looping-call previews quote
+        # the RAG prompt — i.e. actual vault text; drop them here. They remain
+        # in the sidecar log (see _record_llm_call) for diagnostics.
+        stats = payload.get("llm_stats")
+        if isinstance(stats, dict):
+            stats.pop("loop_previews", None)
+        return payload
 
     @app.post("/recall", dependencies=[Depends(require_auth)])
     async def recall(req: RecallRequest) -> dict:

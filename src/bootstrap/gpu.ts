@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { spawnSync } from "child_process";
+import { execFile } from "child_process";
 
 export type GpuVendor = "amd" | "nvidia" | "intel" | "none";
 
@@ -103,10 +103,12 @@ export function detectGpuLinux(sysfsRoot = "/sys/class/drm"): GpuVendor {
 	return pickVendor(vendors);
 }
 
-/** Detect the GPU vendor on Windows via PowerShell / WMI. */
-export function detectGpuWindows(): GpuVendor {
-	try {
-		const res = spawnSync(
+/** Detect the GPU vendor on Windows via PowerShell / WMI. Async — a WMI cold
+ *  start routinely takes seconds, and this runs on every backend boot; a sync
+ *  spawn here freezes Obsidian's renderer for that whole time. */
+export function detectGpuWindows(): Promise<GpuVendor> {
+	return new Promise((resolve) => {
+		execFile(
 			"powershell",
 			[
 				"-NoProfile",
@@ -114,17 +116,17 @@ export function detectGpuWindows(): GpuVendor {
 				"Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name",
 			],
 			{ encoding: "utf8", timeout: 5000, windowsHide: true },
+			(err, stdout) => {
+				if (err || !stdout) return resolve("none");
+				resolve(parseWindowsAdapters(stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)));
+			},
 		);
-		if (res.status !== 0 || !res.stdout) return "none";
-		return parseWindowsAdapters(res.stdout.split(/\r?\n/).map((l) => l.trim()).filter(Boolean));
-	} catch {
-		return "none";
-	}
+	});
 }
 
 /** Detect a supported GPU on the current host. macOS returns "none": its
  *  standard build already includes Metal, so no Vulkan swap is needed. */
-export function detectGpu(): GpuVendor {
+export async function detectGpu(): Promise<GpuVendor> {
 	if (process.platform === "linux") return detectGpuLinux();
 	if (process.platform === "win32") return detectGpuWindows();
 	return "none";

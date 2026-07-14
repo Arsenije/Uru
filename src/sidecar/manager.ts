@@ -1,4 +1,4 @@
-import { type ChildProcess, execFileSync, spawn } from "child_process";
+import { type ChildProcess, execFile, spawn } from "child_process";
 import { createServer } from "net";
 import { randomUUID } from "crypto";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "fs";
@@ -21,8 +21,21 @@ export interface SidecarLaunchSpec {
 
 type StatusListener = (status: HealthResponse["status"], detail: string) => void;
 
-const READY_TIMEOUT_MS = 120_000;
+// Must exceed the sidecar's own worst case, or we declare failure while it's
+// still legitimately loading: llama.py waits up to 240s per model (chat+embed
+// load in parallel), plus khora connect/migrations. Giving up early used to
+// leave the (still-loading) sidecar alive to be idle-killed and restart-looped.
+const READY_TIMEOUT_MS = 300_000;
 const RESTART_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
+
+/** Run a command and resolve with its stdout; rejects on spawn failure or non-zero exit. */
+function execCapture(cmd: string, args: string[]): Promise<string> {
+	return new Promise((resolve, reject) => {
+		execFile(cmd, args, { encoding: "utf8", windowsHide: true }, (err, stdout) =>
+			err ? reject(err) : resolve(stdout),
+		);
+	});
+}
 
 /** Picks a free 127.0.0.1 TCP port by binding to :0 and releasing it. */
 function pickPort(): Promise<number> {
@@ -69,7 +82,7 @@ export class SidecarManager {
 
 	/** Spawn the sidecar and resolve once /health reports a terminal state. */
 	async start(): Promise<HealthResponse> {
-		this.takeOverExisting(); // kill any prior sidecar group from a stale lock
+		await this.takeOverExisting(); // kill any prior sidecar group from a stale lock
 		this.stoppedByUs = false;
 		this.port = await pickPort();
 		this.token = randomUUID();
@@ -108,7 +121,29 @@ export class SidecarManager {
 		this.writeLock();
 		this.wireProcessEvents();
 
-		const health = await this.awaitReady();
+		let health: HealthResponse;
+		try {
+			health = await this.awaitReady();
+		} catch (e) {
+			// Startup failed with the child still alive (ready timeout, or the
+			// sidecar latched "error" after loading its models) — kill the whole
+			// tree or it lingers at multi-GB RSS until Obsidian quits. Marked as
+			// stopped-by-us so the exit handler doesn't crash-restart a boot we
+			// just declared failed; the caller surfaces the error and the user
+			// retries deliberately. (If the child already died on its own, the
+			// exit handler has run and its crash-restart proceeds as before.)
+			if (this.proc && this.proc.exitCode === null) {
+				this.stoppedByUs = true;
+				this.killGroup("SIGTERM");
+				const proc = this.proc;
+				setTimeout(() => {
+					if (proc.exitCode === null && proc.pid) {
+						SidecarManager.killTree(proc.pid, "SIGKILL");
+					}
+				}, 4_000);
+			}
+			throw e;
+		}
 		this.startHeartbeat();
 		return health;
 	}
@@ -145,15 +180,52 @@ export class SidecarManager {
 	/**
 	 * True if `pid` is actually one of our own processes (uru_sidecar or its
 	 * llama-server children), not some unrelated process that happens to reuse
-	 * a PID recorded in a stale lockfile. POSIX-only — Windows' taskkill /T
-	 * walks the real parent/child tree instead of trusting a bare PID match.
+	 * a PID recorded in a stale lockfile. Checks the live command line on every
+	 * platform — a stale PID must NEVER be killed unverified, because after a
+	 * crash/reboot the OS can hand the recorded PID to any innocent process.
 	 */
-	private static looksLikeOurs(pid: number): boolean {
+	private static async looksLikeOurs(pid: number): Promise<boolean> {
 		try {
-			const cmd = execFileSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
+			const cmd =
+				process.platform === "win32"
+					? // pid is validated as an integer by the caller, so interpolation is safe.
+						await execCapture("powershell", [
+							"-NoProfile",
+							"-NonInteractive",
+							"-Command",
+							`(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`,
+						])
+					: await execCapture("ps", ["-p", String(pid), "-o", "command="]);
 			return /uru_sidecar|llama-server/.test(cmd);
 		} catch {
 			return false; // no such process — nothing to verify or kill
+		}
+	}
+
+	/**
+	 * POSIX: the llama children are spawned into the sidecar's process group and
+	 * survive an uncleaned sidecar death (SIGKILL from the OOM killer, a native
+	 * crash) — Linux reaps them via PDEATHSIG, but macOS has no equivalent, so
+	 * the group of a dead leader can still hold multi-GB llama servers. If it
+	 * still contains our processes (verified by command line), kill the group.
+	 * Uses `ps ax` rather than `pgrep -g`, which can't match by pgid on macOS.
+	 */
+	private static async killOrphanedGroup(pgid: number): Promise<void> {
+		if (process.platform === "win32") return; // covered by the kill-on-close Job Object
+		try {
+			const out = await execCapture("ps", ["ax", "-o", "pgid=,command="]);
+			const stillOurs = out.split("\n").some((line) => {
+				const m = line.match(/^\s*(\d+)\s+(.*)$/);
+				return m !== null && Number(m[1]) === pgid && /uru_sidecar|llama-server/.test(m[2]);
+			});
+			if (!stillOurs) return;
+			try {
+				process.kill(-pgid, "SIGKILL");
+			} catch {
+				/* group vanished between the check and the kill */
+			}
+		} catch {
+			/* ps unavailable — nothing safe to do */
 		}
 	}
 
@@ -164,10 +236,14 @@ export class SidecarManager {
 	 * this, a leftover sidecar+llama-server tree can coexist indefinitely with a
 	 * fresh one instead of being replaced. POSIX-only (uses pgrep).
 	 */
-	private static findOrphans(dbPath: string): number[] {
+	private static async findOrphans(dbPath: string): Promise<number[]> {
 		if (process.platform === "win32") return [];
+		// pgrep -f treats the pattern as an ERE — escape the path's regex
+		// metacharacters (".", and "("/"[" legal in vault names would otherwise
+		// make the pattern invalid and silently disable this backstop).
+		const pattern = dbPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 		try {
-			const out = execFileSync("pgrep", ["-f", dbPath], { encoding: "utf8" });
+			const out = await execCapture("pgrep", ["-f", pattern]);
 			return out.split("\n").map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
 		} catch {
 			return []; // pgrep exits non-zero when nothing matches
@@ -175,20 +251,30 @@ export class SidecarManager {
 	}
 
 	/** On startup, terminate any leftover sidecar (+ llama children) for this vault. */
-	private takeOverExisting(): void {
+	private async takeOverExisting(): Promise<void> {
 		if (existsSync(this.spec.lockPath)) {
 			try {
 				const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8"));
-				if (typeof pid === "number" && (process.platform === "win32" || SidecarManager.looksLikeOurs(pid))) {
-					SidecarManager.killTree(pid, "SIGKILL");
+				if (Number.isInteger(pid)) {
+					if (await SidecarManager.looksLikeOurs(pid)) {
+						SidecarManager.killTree(pid, "SIGKILL");
+					} else {
+						// Leader already dead — its llama children may live on in
+						// its process group (macOS: no PDEATHSIG).
+						await SidecarManager.killOrphanedGroup(pid);
+					}
 				}
 			} catch {
 				/* unreadable lock */
 			}
 			this.clearLock();
 		}
-		for (const pid of SidecarManager.findOrphans(this.spec.dbPath)) {
-			SidecarManager.killTree(pid, "SIGKILL");
+		// A matched command line merely *mentions* the db path (e.g. a user
+		// inspecting it with sqlite3) — only kill processes verified as ours.
+		for (const pid of await SidecarManager.findOrphans(this.spec.dbPath)) {
+			if (await SidecarManager.looksLikeOurs(pid)) {
+				SidecarManager.killTree(pid, "SIGKILL");
+			}
 		}
 	}
 
@@ -227,7 +313,13 @@ export class SidecarManager {
 		};
 		this.proc?.stdout?.on("data", capture);
 		this.proc?.stderr?.on("data", capture);
+		const pid = this.proc?.pid;
 		this.proc?.on("exit", (code, sig) => {
+			// An uncleaned death (OOM SIGKILL, native crash) can leave the llama
+			// children alive in the dead leader's group; the lock is cleared just
+			// below, so this is the last place that still knows the pgid. Sweep it
+			// or every crash-restart cycle stacks two more resident servers.
+			if (pid) void SidecarManager.killOrphanedGroup(pid);
 			this.clearLock();
 			if (this.stoppedByUs) return;
 			// Record HOW it died in the diagnostics ring: a signal death (SIGKILL →
