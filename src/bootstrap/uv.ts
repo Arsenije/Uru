@@ -32,10 +32,13 @@ export interface BootstrapContext {
 // Pinned versions.
 const UV_VERSION = "0.11.4";
 const LLAMA_BUILD = "b9838";
-// Pinned khora release — keep in sync with sidecar/pyproject.toml. The dev
-// fast-path verifies the repo-local venv matches this before reusing it, so a
-// stale editable checkout can't silently stand in for the shipped version.
-const KHORA_VERSION = "0.21.0";
+// Pinned khora release — injected at build time from sidecar/pyproject.toml
+// (the single source of truth; see scripts/khora-pin.mjs), so this constant
+// can't drift from what pip actually installs. The dev fast-path verifies the
+// repo-local venv matches this before reusing it, so a stale editable checkout
+// can't silently stand in for the shipped version.
+declare const __KHORA_VERSION__: string;
+const KHORA_VERSION = __KHORA_VERSION__;
 // Bumped whenever the bundled `uru_sidecar` Python changes. The app-data venv is
 // reinstalled when the installed copy differs, so pure-Python sidecar fixes reach
 // existing users (khora alone wouldn't trigger it — its pin rarely moves).
