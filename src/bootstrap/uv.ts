@@ -130,7 +130,7 @@ async function download(url: string, dest: string): Promise<void> {
 	// process (Electron net) — no CORS, follows redirects, honors system proxies.
 	const resp = await requestUrl({ url, method: "GET", throw: false });
 	if (resp.status < 200 || resp.status >= 300) {
-		throw new Error(`download failed (HTTP ${resp.status}): ${url}`);
+		throw new Error(`Download failed (HTTP ${resp.status}) — ${url}`);
 	}
 	writeFileSync(dest, Buffer.from(resp.arrayBuffer));
 }
@@ -215,7 +215,7 @@ async function ensureUv(runtimeDir: string, log: (s: string) => void): Promise<s
 	await download(`https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${asset}`, archive);
 	await extract(archive, join(runtimeDir, "uv"), log);
 	const bin = findFile(join(runtimeDir, "uv"), "uv");
-	if (!bin) throw new Error("uv binary not found after extraction");
+	if (!bin) throw new Error("uv binary not found after extraction.");
 	if (process.platform !== "win32") chmodSync(bin, 0o755);
 	return bin;
 }
@@ -258,7 +258,7 @@ async function fetchLlamaServer(
 	await extract(archive, staging, log);
 	if (!findFile(staging, "llama-server")) {
 		rmSync(staging, { recursive: true, force: true });
-		throw new Error("llama-server not found after extraction");
+		throw new Error("llama-server not found after extraction.");
 	}
 	// Swap the verified build into place (only now discard any old one).
 	rmSync(root, { recursive: true, force: true });
@@ -367,8 +367,8 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 	if (stale) {
 		log(
 			installed === null
-				? "Installing khora + sidecar…"
-				: `Updating backend (khora ${installed.khora}→${KHORA_VERSION}, ` +
+				? "Installing Khora + sidecar…"
+				: `Updating the local AI service (Khora ${installed.khora}→${KHORA_VERSION}, ` +
 						`sidecar ${installed.sidecar}→${SIDECAR_VERSION})…`,
 		);
 		// Force the CPU torch wheel. torch is pulled in only transitively (khora →
@@ -389,7 +389,7 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 		);
 		if ((await probeVersions(py)) === null) {
 			throw new Error(
-				"backend dependencies missing after install — `import uru_sidecar/khora/huggingface_hub` failed; check diagnostics.",
+				"The local AI service is missing dependencies after install — importing uru_sidecar/khora/huggingface_hub failed; check diagnostics.",
 			);
 		}
 	}
@@ -417,7 +417,7 @@ export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths
 	}
 	if (!models) throw new Error("Model download failed; check diagnostics.");
 
-	log("Setup complete — backend ready.");
+	log("Setup complete — Uru is ready.");
 	// uru_sidecar is pip-installed into the venv, so `python -m uru_sidecar`
 	// works from any cwd; runtimeDir is a harmless PYTHONPATH.
 	return { pythonPath: py, sidecarCwd: runtimeDir, llamaServerBin, ...models };

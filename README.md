@@ -2,18 +2,18 @@
 
 **Ask your Obsidian vault anything — and get answers from what you actually wrote, completely offline.**
 
-Uru makes your [Obsidian](https://obsidian.md) vault searchable by meaning and lets you *recall* or *chat* with everything you've written — with citations back to the exact notes. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
+Uru makes your [Obsidian](https://obsidian.md) vault searchable by meaning and lets you *search* or *chat* with everything you've written — with citations back to the exact notes. Everything runs on your own machine via [llama.cpp](https://github.com/ggml-org/llama.cpp); nothing is uploaded.
 
-It's powered by [khora](https://github.com/DeytaHQ/khora), a local-first search-and-connections library. Obsidian can't run Python, so Uru ships a tiny local backend that drives khora for you — you never have to touch it.
+It's powered by [Khora](https://github.com/DeytaHQ/khora), a local-first search-and-connections library. Obsidian can't run Python, so Uru ships a tiny local backend that drives Khora for you — you never have to touch it.
 
 ![Uru](docs/uru_screenshot.png)
 
 ## What you can do
 
-- **Recall.** Ask a question and get the most relevant passages from across your vault — semantic, not keyword. Each result links back to its note.
+- **Search.** Ask a question and get the most relevant passages from across your vault — semantic, not keyword. Each result links back to its note.
 - **Chat with your vault.** A RAG chat panel that answers from your notes and cites them by `[1]`, `[2]`. Scope it to the whole vault or just the current note.
-- **Index automatically.** New and changed notes are picked up as you write; deletes and renames are handled too. No manual re-sync.
-- **Stay private.** No account, no API keys, no network calls after the one-time model download. Your notes never leave your computer.
+- **Index automatically.** New and edited notes are picked up as you write; deletes and renames are handled too. No manual re-sync.
+- **Stay private.** No account, no API keys, no network calls after the one-time model download. Your notes never leave your computer — and Uru never alters them.
 
 ## Get started
 
@@ -39,7 +39,7 @@ Then, either way:
 
 3. **Enable it.** In Obsidian: **Settings → Community plugins → enable Uru**.
 4. **Run setup.** A dialog opens — click **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
-5. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Recall"** or open the chat (💬 ribbon icon).
+5. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Search in your vault"** or open the chat (💬 ribbon icon).
 
 ### For AI assistants
 
@@ -94,7 +94,7 @@ STEP 4 — tell them the success signal:
   dialog (and Settings → Uru) has a "Copy diagnostics" button — ask for that text.
 
 STEP 5 — tell them how to use it:
-  Run the command "Uru: Index vault", then "Uru: Recall" or the 💬 chat icon.
+  Run the command "Uru: Index vault", then "Uru: Search in your vault" or the 💬 chat icon.
 
 DO NOT:
   - Try to install on Obsidian mobile (desktop only).
@@ -177,11 +177,11 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 ```
 Obsidian plugin (TypeScript)
   → spawns + Bearer-auth HTTP →  uru_sidecar (Python, FastAPI)
-                                   ├─ khora  (sqlite_lance: SQLite + LanceDB)
+                                   ├─ Khora  (sqlite_lance: SQLite + LanceDB)
                                    └─ proxy → 2× llama.cpp servers (chat + embed)
 ```
 
-khora is a pure-Python library, so the plugin drives it through a small local **sidecar**. The sidecar runs two single-model `llama-server` processes — a chat model (used for RAG answers) and an embedding model — behind a one-URL, OpenAI-compatible proxy, then points khora at them. It supervises those processes and restarts either one if it dies, and idle-shuts-down when you're not using Uru.
+Khora is a pure-Python library, so the plugin drives it through a small local **sidecar**. The sidecar runs two single-model `llama-server` processes — a chat model (used for RAG answers) and an embedding model — behind a one-URL, OpenAI-compatible proxy, then points Khora at them. It supervises those processes and restarts either one if it dies, and idle-shuts-down when you're not using Uru.
 
 **Default models** (~3 GB total):
 - Chat: `Qwen2.5-3B-Instruct` (Q4_K_M GGUF)
@@ -196,7 +196,7 @@ npm run dev          # watch-build main.js
 npm run build        # production build + typecheck
 ```
 
-The backend bootstraps on first run (`uv` installs Python 3.13 + khora + llama.cpp and downloads the models). In this repo a dev venv (`sidecar/.venv`) and cached models (`sidecar/.models`) are reused automatically **if they match the pinned khora version**; otherwise Uru falls through to a clean app-data bootstrap.
+The backend bootstraps on first run (`uv` installs Python 3.13 + Khora + llama.cpp and downloads the models). In this repo a dev venv (`sidecar/.venv`) and cached models (`sidecar/.models`) are reused automatically **if they match the pinned Khora version**; otherwise Uru falls through to a clean app-data bootstrap.
 
 Sidecar smoke test (remember → recall → forget):
 
@@ -211,10 +211,10 @@ Repo layout:
 Uru/
 ├── main.ts              # plugin entry — lifecycle, commands, status
 ├── src/
-│   ├── bootstrap/uv.ts  # uv-based Python/khora bootstrap + model download
+│   ├── bootstrap/uv.ts  # uv-based Python/Khora bootstrap + model download
 │   ├── sidecar/         # process manager + typed HTTP client
 │   ├── indexing/        # full + incremental vault indexing (hash-gated)
-│   ├── views/           # recall + chat panels
+│   ├── views/           # search + chat panels
 │   └── settings.ts      # settings tab
 └── sidecar/             # Python sidecar (FastAPI + llama.cpp supervisor)
     └── uru_sidecar/

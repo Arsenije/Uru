@@ -35,7 +35,7 @@ function pickPort(): Promise<number> {
 				const { port } = addr;
 				srv.close(() => resolve(port));
 			} else {
-				srv.close(() => reject(new Error("could not determine port")));
+				srv.close(() => reject(new Error("Couldn't find a free port for the local AI service.")));
 			}
 		});
 	});
@@ -88,7 +88,7 @@ export class SidecarManager {
 		];
 		if (this.spec.namespaceId) args.push("--namespace-id", this.spec.namespaceId);
 
-		this.emit("starting", "launching backend");
+		this.emit("starting", "starting the local AI service");
 		// POSIX detached: the sidecar leads its own process group, so killing -pid
 		// takes down the sidecar AND its llama.cpp children together (no orphans).
 		// On Windows detached does nothing useful here (killTree shells out to
@@ -206,8 +206,8 @@ export class SidecarManager {
 		// A null/transient unreachable response is covered by the process-exit
 		// handler; only act on an explicit terminal status from the sidecar.
 		if (!h) return;
-		if (h.status === "ok") this.emit("ok", `namespace ${h.namespace_id ?? "?"}`);
-		else if (h.status === "error") this.emit("error", h.error ?? "backend degraded");
+		if (h.status === "ok") this.emit("ok", "");
+		else if (h.status === "error") this.emit("error", h.error ?? "service degraded");
 	}
 
 	private stopHeartbeat(): void {
@@ -236,7 +236,7 @@ export class SidecarManager {
 			// just stops mid-boot with nothing to distinguish the failure modes.
 			const how = `code ${code ?? "?"}${sig ? `, signal ${sig}` : ""}`;
 			this.stderrRing.push(`[manager] backend exited (${how})`);
-			this.emit("error", `backend exited (${how})`);
+			this.emit("error", `service stopped (${how})`);
 			void this.scheduleRestart();
 		});
 	}
@@ -245,29 +245,29 @@ export class SidecarManager {
 		const deadline = Date.now() + READY_TIMEOUT_MS;
 		while (Date.now() < deadline) {
 			if (!this.proc || this.proc.exitCode !== null) {
-				throw new Error(`backend exited during startup:\n${this.diagnostics}`);
+				throw new Error(`The local AI service stopped during startup:\n${this.diagnostics}`);
 			}
 			const h = await this.client!.health();
 			if (h?.status === "ok") {
 				this.restartAttempts = 0;
-				this.emit("ok", `namespace ${h.namespace_id ?? "?"}`);
+				this.emit("ok", "");
 				return h;
 			}
 			if (h?.status === "error") {
-				throw new Error(`the local AI service failed to start: ${h.error ?? "unknown"}`);
+				throw new Error(`The local AI service failed to start — ${h.error ?? "unknown"}`);
 			}
 			await sleep(400);
 		}
-		throw new Error("backend did not become ready in time");
+		throw new Error("The local AI service didn't become ready in time.");
 	}
 
 	private async scheduleRestart(): Promise<void> {
 		if (this.restartAttempts >= RESTART_BACKOFF_MS.length) {
-			this.emit("error", `backend crashed and could not be restarted:\n${this.diagnostics}`);
+			this.emit("error", `The local AI service crashed and couldn't be restarted:\n${this.diagnostics}`);
 			return;
 		}
 		const delay = RESTART_BACKOFF_MS[this.restartAttempts++];
-		this.emit("starting", `restarting backend in ${delay / 1000}s`);
+		this.emit("starting", `restarting in ${delay / 1000}s`);
 		await sleep(delay);
 		if (this.stoppedByUs) return;
 		try {

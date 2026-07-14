@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **One consistent voice across every label, notice, and error.** The search feature is now called **Search** everywhere (ribbon, command, and panel — previously "Recall"); user-facing messages say **"the local AI service"** instead of the internal word "backend"; and status-bar tooltips show plain words ("Ready", "Starting…") instead of raw internal state. Notices drop the inconsistent "Uru:" prefix, use consistent punctuation, and no longer duplicate the same message two ways. "Remove Uru completely" is now **"Uninstall Uru"**, the indexing button reads **"Index new & edited"**, and the underlying library is capitalized as **Khora**. Developer-only details (raw relevance scores, all-caps `ERROR:`, "(no answer)") no longer leak into the UI. No behavior changed — only wording.
+
 ### Removed
-- **Deep indexing (entity extraction) is gone.** Uru no longer runs a local model over every note to map people, places, and ideas — indexing is now always the fast embeddings-only path (what used to be called "Quick"). The Deep/Quick choice disappears from the chat first-run prompt and Settings, the "People & topics" chips disappear from Recall, and indexing a large vault drops from hours to minutes. Recall, chat, and citations are unchanged. Notes indexed under Deep mode keep working as-is; no re-index is needed.
+- **Deep indexing (entity extraction) is gone.** Uru no longer runs a local model over every note to map people, places, and ideas — indexing is now always the fast embeddings-only path (what used to be called "Quick"). The Deep/Quick choice disappears from the chat first-run prompt and Settings, the "People & topics" chips disappear from Search, and indexing a large vault drops from hours to minutes. Search, chat, and citations are unchanged. Notes indexed under Deep mode keep working as-is; no re-index is needed.
 - **"Link notes in the graph" is gone.** The Settings section that wrote a "uru-links" property into your notes' frontmatter (so connections showed in Obsidian's Graph view) has been removed. On the first launch after updating, Uru automatically strips the "uru-links" property from any notes that still carry it — the same clean undo the "Remove Uru links" button performed — and tells you how many notes were cleaned. Your note text and other properties are untouched.
 
 ### Fixed
