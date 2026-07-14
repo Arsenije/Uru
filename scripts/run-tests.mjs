@@ -6,6 +6,7 @@ import esbuild from "esbuild";
 import { spawnSync } from "child_process";
 import { mkdirSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
+import { readKhoraPin } from "./khora-pin.mjs";
 
 const TEST_DIR = "tests";
 const OUT_DIR = ".test-build";
@@ -29,6 +30,11 @@ await esbuild.build({
 	platform: "node", // node builtins (fs, path, node:test) stay external
 	format: "esm",
 	sourcemap: "inline",
+	define: {
+		// Same injection as esbuild.config.mjs, so tests can import modules
+		// that consume the build-time khora pin.
+		__KHORA_VERSION__: JSON.stringify(readKhoraPin()),
+	},
 });
 
 const outFiles = readdirSync(OUT_DIR)
