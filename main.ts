@@ -48,6 +48,10 @@ export default class UruPlugin extends Plugin {
 	// Single-flight guard: two overlapping boots would each spawn a sidecar,
 	// whose lockfile takeovers then kill each other in an endless restart war.
 	private bootPromise: Promise<void> | null = null;
+	// reindex()'s isIndexing() check sits before an await; this synchronous flag
+	// closes that window so a second entrant can't stamp interrupted-state or
+	// fire the trailing idle tick that hides the first run's live progress.
+	private reindexInFlight = false;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -326,6 +330,7 @@ export default class UruPlugin extends Plugin {
 		this.eventOffs = [];
 		if (this.indexer) {
 			this.indexer.stop();
+			this.indexer.cancelPending();
 			await this.indexer.flush().catch(() => undefined);
 			this.indexer = null;
 		}
@@ -433,6 +438,12 @@ export default class UruPlugin extends Plugin {
 		this.indexer?.stop();
 	}
 
+	/** Recompile the ignore globs so live file events honor an edited setting
+	 *  immediately (not only after the next full index). */
+	applyIgnorePatterns(): void {
+		this.indexer?.recompileIgnore();
+	}
+
 	/**
 	 * One-time migration for the removed graph-linking feature: strip the
 	 * "uru-links" frontmatter property it wrote into notes. Gated on the old
@@ -510,10 +521,20 @@ export default class UruPlugin extends Plugin {
 		// A run already owns the interrupted flag and the progress UI — don't let a
 		// concurrent call (e.g. auto-index-on-startup + a manual click) stamp state
 		// or fire an idle tick that would hide the live progress.
-		if (this.isIndexing()) {
+		if (this.isIndexing() || this.reindexInFlight) {
 			new Notice("Uru is already indexing.");
 			return;
 		}
+		this.reindexInFlight = true;
+		try {
+			await this.doReindex(force);
+		} finally {
+			this.reindexInFlight = false;
+		}
+	}
+
+	private async doReindex(force: boolean): Promise<void> {
+		if (!this.indexer) return;
 		this.indexer.recompileIgnore();
 		// Mark a run as in-flight BEFORE it starts and persist, so a crash/quit
 		// mid-run leaves the flag set → the Resume prompt appears next time.
