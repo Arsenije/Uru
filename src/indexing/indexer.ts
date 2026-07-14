@@ -63,7 +63,7 @@ export function globToRegExp(glob: string): RegExp {
 export class Indexer {
 	private store: HashStore;
 	private ignore: RegExp[] = [];
-	private pending = new Map<string, ReturnType<typeof setTimeout>>();
+	private pending = new Map<string, number>();
 	private indexing = false;
 	private cancelRequested = false;
 
@@ -102,7 +102,7 @@ export class Indexer {
 
 	/** Cancel queued debounce timers so no reindexOne fires after teardown. */
 	cancelPending(): void {
-		for (const t of this.pending.values()) clearTimeout(t);
+		for (const t of this.pending.values()) window.clearTimeout(t);
 		this.pending.clear();
 	}
 
@@ -282,7 +282,7 @@ export class Indexer {
 	}
 
 	private sleep(ms: number): Promise<void> {
-		return new Promise((r) => setTimeout(r, ms));
+		return new Promise((r) => window.setTimeout(r, ms));
 	}
 
 	// ---- incremental -----------------------------------------------------
@@ -307,10 +307,10 @@ export class Indexer {
 
 	private debounce(file: TFile): void {
 		const prev = this.pending.get(file.path);
-		if (prev) clearTimeout(prev);
+		if (prev) window.clearTimeout(prev);
 		this.pending.set(
 			file.path,
-			setTimeout(() => {
+			window.setTimeout(() => {
 				this.pending.delete(file.path);
 				void this.reindexOne(file);
 			}, DEBOUNCE_MS),

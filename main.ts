@@ -10,7 +10,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync } from "fs";
 import { join } from "path";
 import { randomUUID } from "crypto";
 
-import { DEFAULT_SETTINGS, UruSettingTab, type UruSettings } from "./src/settings";
+import { DEFAULT_SETTINGS, defaultIgnoreGlobs, UruSettingTab, type UruSettings } from "./src/settings";
 import { ensureBackend, type BackendPaths } from "./src/bootstrap/uv";
 import { runtimeDir, vaultDataDir } from "./src/paths";
 import { SidecarManager } from "./src/sidecar/manager";
@@ -127,10 +127,14 @@ export default class UruPlugin extends Plugin {
 		});
 	}
 
-	async onunload(): Promise<void> {
+	onunload(): void {
 		this.unloaded = true;
-		await this.stopIndexer();
-		if (this.manager) await this.manager.stop();
+		// Obsidian's Plugin.onunload is synchronous and never awaited; run the
+		// shutdown sequence fire-and-forget, keeping indexer-before-sidecar order.
+		void (async () => {
+			await this.stopIndexer();
+			if (this.manager) await this.manager.stop();
+		})();
 	}
 
 	// ---- backend lifecycle ----------------------------------------------
@@ -577,7 +581,7 @@ export default class UruPlugin extends Plugin {
 			leaf = this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf(true);
 			await leaf.setViewState({ type: URU_RECALL_VIEW, active: true });
 		}
-		this.app.workspace.revealLeaf(leaf);
+		await this.app.workspace.revealLeaf(leaf);
 		const view = leaf.view;
 		if (view instanceof RecallView) view.focusInput();
 	}
@@ -591,7 +595,7 @@ export default class UruPlugin extends Plugin {
 			leaf = this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf(true);
 			await leaf.setViewState({ type: URU_CHAT_VIEW, active: true });
 		}
-		this.app.workspace.revealLeaf(leaf);
+		await this.app.workspace.revealLeaf(leaf);
 		const view = leaf.view;
 		if (view instanceof ChatView) view.focusInput();
 	}
@@ -628,7 +632,14 @@ export default class UruPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+		this.settings = Object.assign(
+			{},
+			DEFAULT_SETTINGS,
+			// The config folder is user-relocatable, so its glob can't live in the
+			// static defaults — resolve it from the vault at load time.
+			{ ignoreGlobs: defaultIgnoreGlobs(this.app) },
+			await this.loadData(),
+		);
 	}
 
 	async saveSettings(): Promise<void> {
