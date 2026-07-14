@@ -130,6 +130,20 @@ DO NOT:
 
 This is the whole point of Uru: **everything happens on your own computer.** All the AI runs on local models through llama.cpp, and everything is stored in an on-disk database on your machine. No account, no API keys, and — after the one-time model download — no network calls. Your notes are never copied or uploaded.
 
+### Network use
+
+Uru touches the network in exactly one situation: the first-run setup download (and again only when a plugin update pins newer components). Every download is pinned to an exact version or revision, so the plugin can never silently fetch anything newer than what its release was tested with:
+
+| What | From | Why |
+|---|---|---|
+| `uv` (version-pinned) | github.com — [astral-sh/uv](https://github.com/astral-sh/uv/releases) release assets | Sets up the Python environment |
+| Python 3.13 | github.com — [python-build-standalone](https://github.com/astral-sh/python-build-standalone/releases) release assets, fetched by uv | Runs the sidecar |
+| Khora + sidecar dependencies (exact `==` pins) | [PyPI](https://pypi.org) | The retrieval backend |
+| llama.cpp `llama-server` (build-pinned) | github.com — [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp/releases) release assets | Runs the models |
+| Chat + embedding models (revision-pinned GGUFs) | [Hugging Face](https://huggingface.co) | The models themselves |
+
+After that, everything — indexing, search, chat — talks only to Uru's own sidecar on `127.0.0.1`. No telemetry, no analytics, no update pings.
+
 The backend (the Python environment, models, llama.cpp binary, and the index/database) lives **outside your vault**, in per-user app-data, so it survives plugin updates and is never touched by Obsidian Sync:
 
 | OS | Location |

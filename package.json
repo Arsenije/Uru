@@ -1,6 +1,6 @@
 {
 	"name": "uru",
-	"version": "0.1.10",
+	"version": "0.1.11",
 	"description": "Search and chat with your vault using local AI — private, offline, powered by Khora.",
 	"main": "main.js",
 	"scripts": {
