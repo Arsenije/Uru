@@ -392,19 +392,31 @@ export class SidecarManager {
 		const proc = this.proc;
 		if (proc && proc.exitCode === null) {
 			const exited = new Promise<void>((res) => proc.once("exit", () => res()));
-			// Send the kill signal FIRST and synchronously — don't gate it behind
-			// an HTTP round-trip. requestUrl() has no timeout of its own, so if the
-			// sidecar's event loop is ever wedged (e.g. a long-running extraction),
-			// awaiting /shutdown first could stall long enough that Obsidian's own
-			// quit sequence moves on without ever giving us the chance to send this
-			// signal at all — which is exactly how a detached child gets orphaned.
+			if (process.platform === "win32") {
+				// Windows has no graceful signal — killTree there is taskkill /F,
+				// instant death with writes potentially in flight. Give the
+				// authenticated /shutdown route a bounded chance to run
+				// runtime.stop() (khora disconnect, llama teardown) first. The
+				// Promise.race keeps the old rule of never gating the kill on a
+				// wedged HTTP round-trip: 2.5s, then we kill regardless.
+				await Promise.race([this.client?.shutdown() ?? Promise.resolve(), sleep(2_500)]);
+			}
+			// Send the kill signal without gating it behind an HTTP round-trip.
+			// requestUrl() has no timeout of its own, so if the sidecar's event
+			// loop is ever wedged (e.g. a long-running extraction), awaiting
+			// /shutdown could stall long enough that Obsidian's own quit sequence
+			// moves on without ever giving us the chance to send this signal at
+			// all — which is exactly how a detached child gets orphaned. (On
+			// POSIX SIGTERM is itself the graceful path; /shutdown below is a
+			// courtesy. If Windows' bounded race above already worked, this
+			// taskkill lands on a dead pid — harmless.)
 			this.killGroup("SIGTERM");
 			const timer = setTimeout(() => this.killGroup("SIGKILL"), 4_000);
 			// Best-effort courtesy so khora gets a clean disconnect if there's time;
 			// client.shutdown() already swallows its own errors, and the sidecar's
 			// lifespan shutdown handler no-ops a second stop() if SIGTERM's already
 			// triggered one.
-			void this.client?.shutdown();
+			if (process.platform !== "win32") void this.client?.shutdown();
 			await exited;
 			clearTimeout(timer);
 		} else if (this.client) {
