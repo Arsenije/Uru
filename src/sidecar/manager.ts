@@ -92,10 +92,12 @@ export class SidecarManager {
 		this.token = randomUUID();
 		this.client = new SidecarClient(`http://127.0.0.1:${this.port}`, this.token);
 
+		// The auth token travels ONLY via env (URU_TOKEN, read as config.py's
+		// --token default) — as a CLI arg it would be world-readable in
+		// /proc/<pid>/cmdline on Linux.
 		const args = [
 			"-m", "uru_sidecar",
 			"--port", String(this.port),
-			"--token", this.token,
 			"--db-path", this.spec.dbPath,
 			"--llama-server", this.spec.llamaServerPath,
 			"--chat-model", this.spec.chatModelPath,

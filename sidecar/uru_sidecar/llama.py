@@ -13,6 +13,7 @@ CPU elsewhere).
 
 from __future__ import annotations
 
+import os
 import signal
 import socket
 import subprocess
@@ -176,6 +177,11 @@ class LlamaServer:
     n_gpu_layers: int = 999  # offload all (ignored by CPU-only builds)
     host: str = "127.0.0.1"
     port: int = 0
+    # When set, llama-server requires `Authorization: Bearer <api_key>` —
+    # otherwise any local process that finds the port gets free inference
+    # (and the built-in web UI). Passed via env, not argv, so it never shows
+    # in /proc/<pid>/cmdline.
+    api_key: str = ""
 
     _proc: subprocess.Popen | None = None
     _log_path: Path | None = None
@@ -219,10 +225,19 @@ class LlamaServer:
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._log_path = self.work_dir / f"llama-{self.alias}.log"
         log = open(self._log_path, "w")  # noqa: SIM115 — handle owned by the child
+        env = os.environ.copy()
+        if self.api_key:
+            # env form of --api-key (verified against the pinned b9838 binary:
+            # `--api-key KEY ... (env: LLAMA_API_KEY)`) — keeps the key out of
+            # argv. If a build ignored the var it would fail OPEN (no auth —
+            # the pre-hardening behavior), never break requests: the proxy
+            # always sends the Bearer header either way.
+            env["LLAMA_API_KEY"] = self.api_key
         self._proc = subprocess.Popen(
             self._args(),
             stdout=log,
             stderr=subprocess.STDOUT,
+            env=env,
             preexec_fn=_die_with_parent,
             creationflags=_CREATION_FLAGS,
         )
@@ -236,7 +251,10 @@ class LlamaServer:
     def wait_ready(self, timeout: float = 240.0) -> None:
         """Block until /health reports the model is loaded."""
         deadline = time.time() + timeout
-        url = f"{self.base_url}/health"
+        # llama.cpp exempts /health from API-key auth, but send the Bearer
+        # header anyway — harmless today, keeps working if that ever changes.
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        req = urllib.request.Request(f"{self.base_url}/health", headers=headers)  # noqa: S310
         while time.time() < deadline:
             if self._proc is not None and self._proc.poll() is not None:
                 raise RuntimeError(
@@ -244,7 +262,7 @@ class LlamaServer:
                     f"(code {self._proc.returncode}):\n{self.log_tail()}"
                 )
             try:
-                with urllib.request.urlopen(url, timeout=2) as r:  # noqa: S310 — localhost
+                with urllib.request.urlopen(req, timeout=2) as r:  # noqa: S310 — localhost
                     if r.status == 200:
                         return
             except (urllib.error.URLError, ConnectionError, OSError):
@@ -259,14 +277,22 @@ class LlamaServer:
         return self._proc is not None and self._proc.poll() is None
 
     def restart(self) -> None:
-        """Re-spawn the server on the same port and block until it's ready.
+        """Re-spawn the server and block until it's ready.
 
-        Reuses ``self.port`` so the proxy's cached base_url stays valid — callers
-        don't have to rewire the OpenAI proxy after a crash recovery.
+        Tries the same port first (stable URLs, no churn); if that fails —
+        typically because another process grabbed the port while the server
+        was down — retries once on a fresh port. The proxy resolves
+        ``base_url`` live per request, so the port change is transparent.
         """
         self.stop()
-        self.start()
-        self.wait_ready()
+        try:
+            self.start()
+            self.wait_ready()
+        except (RuntimeError, TimeoutError):
+            self.stop()
+            self.port = free_port()
+            self.start()
+            self.wait_ready()
 
     def stop(self) -> None:
         if self._proc is None or self._proc.poll() is not None:
