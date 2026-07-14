@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import httpx
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 # llama.cpp can be slow on a cold model load + long prompts.
@@ -65,13 +65,22 @@ def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
 
 
 def build_proxy_router(
-    chat_base: str,
-    embed_base: str,
+    chat_base: Callable[[], str],
+    embed_base: Callable[[], str],
     on_chat_completion: Callable[[ChatCallStat], None] | None = None,
     raw_log_path: Path | None = None,
     openai_chat: dict[str, str] | None = None,
+    api_key: str = "",
 ) -> APIRouter:
     """Return a router exposing /v1/{chat/completions,completions,embeddings,models}.
+
+    ``chat_base``/``embed_base`` are *getters*, resolved per request — a llama
+    server that crash-restarts may come back on a new port, and frozen strings
+    would keep routing to the dead one.
+
+    ``api_key`` (the sidecar token) gates every route (401 without the matching
+    Bearer header) and is forwarded upstream to the --api-key-protected llama
+    servers. Empty means open — dev only, mirroring app.py.
 
     ``raw_log_path``, if given, gets one JSON line per chat-completion call with
     the full request + response bodies — for offline debugging of chat
@@ -88,10 +97,23 @@ def build_proxy_router(
     """
     router = APIRouter()
 
+    def _require_key(authorization: str = Header(default="")) -> None:
+        if not api_key:  # no key configured -> open (dev only)
+            return
+        if authorization != f"Bearer {api_key}":
+            raise HTTPException(status_code=401, detail="unauthorized")
+
+    def _local_headers() -> dict[str, str]:
+        """Headers for the api-key-protected local llama servers."""
+        headers = {"content-type": "application/json"}
+        if api_key:
+            headers["authorization"] = f"Bearer {api_key}"
+        return headers
+
     async def _forward(target: str, body: bytes, headers: dict[str, str] | None = None) -> Response:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             r = await client.post(
-                target, content=body, headers=headers or {"content-type": "application/json"}
+                target, content=body, headers=headers or _local_headers()
             )
         return Response(
             content=r.content,
@@ -105,7 +127,7 @@ def build_proxy_router(
             return (f"{openai_chat['base']}/chat/completions",
                     {"content-type": "application/json",
                      "authorization": f"Bearer {openai_chat['key']}"})
-        return f"{chat_base}/v1/chat/completions", {"content-type": "application/json"}
+        return f"{chat_base()}/v1/chat/completions", _local_headers()
 
     def _rewrite_model(body: bytes) -> bytes:
         """When routing to OpenAI, replace the note model name with the real one."""
@@ -146,7 +168,7 @@ def build_proxy_router(
                 prompt_preview=_last_user_message_preview(req_body),
             ))
 
-    @router.post("/v1/chat/completions")
+    @router.post("/v1/chat/completions", dependencies=[Depends(_require_key)])
     async def chat_completions(request: Request) -> Response:
         body = await request.body()
         streaming = False
@@ -217,11 +239,11 @@ def build_proxy_router(
 
         return StreamingResponse(upstream(), media_type="text/event-stream")
 
-    @router.post("/v1/completions")
+    @router.post("/v1/completions", dependencies=[Depends(_require_key)])
     async def completions(request: Request) -> Response:
-        return await _forward(f"{chat_base}/v1/completions", await request.body())
+        return await _forward(f"{chat_base()}/v1/completions", await request.body())
 
-    @router.post("/v1/embeddings")
+    @router.post("/v1/embeddings", dependencies=[Depends(_require_key)])
     async def embeddings(request: Request) -> Response:
         raw = await request.body()
         # OpenAI's text-embedding-3 `dimensions` param isn't supported by
@@ -232,9 +254,9 @@ def build_proxy_router(
             raw = json.dumps(payload).encode()
         except (json.JSONDecodeError, ValueError):
             pass
-        return await _forward(f"{embed_base}/v1/embeddings", raw)
+        return await _forward(f"{embed_base()}/v1/embeddings", raw)
 
-    @router.get("/v1/models")
+    @router.get("/v1/models", dependencies=[Depends(_require_key)])
     async def models() -> dict:
         return {
             "object": "list",

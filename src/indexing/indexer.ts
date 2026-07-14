@@ -100,6 +100,12 @@ export class Indexer {
 		await this.store.save();
 	}
 
+	/** Cancel queued debounce timers so no reindexOne fires after teardown. */
+	cancelPending(): void {
+		for (const t of this.pending.values()) clearTimeout(t);
+		this.pending.clear();
+	}
+
 	recompileIgnore(): void {
 		this.ignore = this.settings.ignoreGlobs.map(globToRegExp);
 	}
@@ -113,11 +119,11 @@ export class Indexer {
 		return createHash("sha256").update(content).digest("hex").slice(0, 32);
 	}
 
-	/** Read a file, optionally stripping leading YAML frontmatter. */
+	/** Read a file, optionally stripping leading YAML frontmatter (LF or CRLF). */
 	private async readContent(file: TFile): Promise<string> {
 		const raw = await this.app.vault.cachedRead(file);
 		if (this.settings.includeFrontmatter) return raw;
-		return raw.replace(/^---\n[\s\S]*?\n---\n?/, "").trimStart();
+		return raw.replace(/^---\r?\n[\s\S]*?\r?\n---(\r?\n)?/, "").trimStart();
 	}
 
 	private async toDocument(file: TFile): Promise<BatchDocument | null> {
@@ -334,11 +340,13 @@ export class Indexer {
 	private async handleDelete(path: string): Promise<void> {
 		const client = this.client();
 		if (!client) return;
-		const entry = this.store.get(path);
 		await client.forget(path).catch(() => undefined);
-		void entry;
-		this.store.delete(path);
-		await this.store.save();
+		try {
+			this.store.delete(path);
+			await this.store.save();
+		} catch {
+			/* state dir may be gone (uninstall) — fired-and-forgotten from vault events */
+		}
 	}
 
 	private async handleRename(file: TFile, oldPath: string): Promise<void> {

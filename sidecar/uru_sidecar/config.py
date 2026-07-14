@@ -104,7 +104,10 @@ class SidecarConfig:
         return {
             "OPENAI_API_BASE": openai_base,
             "OPENAI_BASE_URL": openai_base,
-            "OPENAI_API_KEY": "sk-noop",
+            # The sidecar token doubles as the proxy's api key, so khora/litellm
+            # authenticate to it. "sk-noop" placeholder only in tokenless dev
+            # runs (litellm rejects an empty key before sending).
+            "OPENAI_API_KEY": self.token or "sk-noop",
             "KHORA_STORAGE_BACKEND": "sqlite_lance",
             "KHORA_STORAGE_SQLITE_LANCE_DB_PATH": str(self.db_path),
             "KHORA_STORAGE_SQLITE_LANCE_EMBEDDING_DIMENSION": str(self.embedding_dimension),

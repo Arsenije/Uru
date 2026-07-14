@@ -22,7 +22,7 @@ export class RecallView extends ItemView {
 		return URU_RECALL_VIEW;
 	}
 	getDisplayText(): string {
-		return "Uru Search";
+		return "Uru search";
 	}
 	getIcon(): string {
 		return "search";

@@ -21,7 +21,7 @@ export class ConfirmModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.createEl("h2", { text: this.opts.title });
+		this.setTitle(this.opts.title);
 		for (const para of this.opts.message) {
 			contentEl.createEl("p", { text: para });
 		}

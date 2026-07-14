@@ -8,6 +8,8 @@ import type UruPlugin from "../../main";
  */
 export class SetupModal extends Modal {
 	private installing = false;
+	/** The diagnostics button reads live state on click — one is enough across retries. */
+	private diagButtonAdded = false;
 
 	constructor(
 		app: App,
@@ -19,7 +21,8 @@ export class SetupModal extends Modal {
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Set up Uru" });
+		this.diagButtonAdded = false; // the button row is rebuilt on every open
+		this.setTitle("Set up Uru");
 		contentEl.createEl("p", {
 			text:
 				"Uru adds AI-powered search to your vault — everything runs locally on your " +
@@ -52,14 +55,17 @@ export class SetupModal extends Modal {
 						append(`\nError: ${(e as Error).message}`);
 						this.installing = false;
 						b.setDisabled(false).setButtonText("Retry");
-						buttons.addButton((c) =>
-							c.setButtonText("Copy diagnostics").onClick(async () => {
-								await navigator.clipboard.writeText(
-									`${this.plugin.diagnostics()}\n\n--- setup log ---\n${logEl.getText()}`,
-								);
-								new Notice("Diagnostics copied");
-							}),
-						);
+						if (!this.diagButtonAdded) {
+							this.diagButtonAdded = true;
+							buttons.addButton((c) =>
+								c.setButtonText("Copy diagnostics").onClick(async () => {
+									await navigator.clipboard.writeText(
+										`${this.plugin.diagnostics()}\n\n--- setup log ---\n${logEl.getText()}`,
+									);
+									new Notice("Diagnostics copied");
+								}),
+							);
+						}
 					}
 				}),
 		);

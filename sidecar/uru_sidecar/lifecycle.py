@@ -50,11 +50,12 @@ class SidecarRuntime:
         work = cfg.work_dir
         self._chat = LlamaServer(
             cfg.llama_server_bin, cfg.chat_model_path, work, alias="uru-chat",
-            n_ctx=cfg.n_ctx_chat, n_gpu_layers=cfg.n_gpu_layers,
+            n_ctx=cfg.n_ctx_chat, n_gpu_layers=cfg.n_gpu_layers, api_key=cfg.token,
         )
         self._embed = LlamaServer(
             cfg.llama_server_bin, cfg.embed_model_path, work, alias="uru-embed",
             embedding=True, n_ctx=cfg.n_ctx_embed, n_gpu_layers=cfg.n_gpu_layers,
+            api_key=cfg.token,
         )
         log.info("starting llama.cpp servers (chat + embed)")
         self._chat.start()
@@ -64,7 +65,7 @@ class SidecarRuntime:
             asyncio.to_thread(self._embed.wait_ready),
         )
 
-        proxy_base = await self._start_proxy(self._chat.base_url, self._embed.base_url)
+        proxy_base = await self._start_proxy()
         os.environ.update(cfg.khora_env(proxy_base))
         log.info("proxy up at %s; connecting khora", proxy_base)
 
@@ -76,11 +77,14 @@ class SidecarRuntime:
         self.status = "ok"
         log.info("sidecar ready (namespace=%s)", self.namespace_id)
 
-    async def _start_proxy(self, chat_base: str, embed_base: str) -> str:
+    async def _start_proxy(self) -> str:
         import uvicorn
         from fastapi import FastAPI
 
         from .proxy import build_proxy_router
+
+        chat, embed = self._chat, self._embed
+        assert chat is not None and embed is not None  # started by start()
 
         # TEMP: route chat/completions to real OpenAI when --openai-model is set
         # (needs OPENAI_API_KEY in env). Embeddings stay local on bge-m3.
@@ -98,16 +102,29 @@ class SidecarRuntime:
         port = free_port()
         app = FastAPI()
         app.include_router(build_proxy_router(
-            chat_base, embed_base,
+            # Getters, not frozen strings: a crash-restarted llama server can
+            # come back on a new port (see LlamaServer.restart).
+            chat_base=lambda: chat.base_url,
+            embed_base=lambda: embed.base_url,
             on_chat_completion=self._record_llm_call,
             raw_log_path=self.config.debug_log_path,
             openai_chat=openai_chat,
+            api_key=self.config.token,
         ))
         self._proxy_server = uvicorn.Server(
             uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         )
         self._proxy_task = asyncio.create_task(self._proxy_server.serve())
+        # Waiting on `started` alone can hang forever: if serve() raises (e.g.
+        # the free_port() TOCTOU lost the port), the exception sits unobserved
+        # in the task and boot stays in "starting" with nothing to clean it up.
+        deadline = time.monotonic() + 15.0
         while not self._proxy_server.started:
+            if self._proxy_task.done():
+                self._proxy_task.result()  # re-raises the bind/startup error
+                raise RuntimeError("proxy server exited before startup")
+            if time.monotonic() > deadline:
+                raise RuntimeError("proxy server failed to start within 15s")
             await asyncio.sleep(0.05)
         return f"http://127.0.0.1:{port}/v1"
 
@@ -249,6 +266,10 @@ class SidecarRuntime:
             query, namespace=self.namespace_id, limit=limit, min_similarity=min_similarity
         )
 
+    # khora 0.21 made entity_types/relationship_types REQUIRED kwargs on
+    # remember/remember_batch. Uru never runs entity extraction
+    # (KHORA_PIPELINES_EXTRACT_ENTITIES=false in khora_env), so empty lists are
+    # the correct values — omitting them is a TypeError on every indexed note.
     async def remember(self, *, external_id: str, content: str, title: str = "",
                        metadata: dict | None = None) -> Any:
         return await self._kb.remember(
@@ -257,6 +278,8 @@ class SidecarRuntime:
             title=title,
             external_id=external_id,
             metadata=metadata or {},
+            entity_types=[],
+            relationship_types=[],
         )
 
     async def remember_batch(self, documents: list[dict], *,
@@ -265,6 +288,8 @@ class SidecarRuntime:
             documents,
             namespace=self.namespace_id,
             on_progress=on_progress,
+            entity_types=[],
+            relationship_types=[],
         )
 
     # ---- chat (RAG) ------------------------------------------------------

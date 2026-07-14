@@ -39,6 +39,19 @@ export default class UruPlugin extends Plugin {
 	private indexStatusListeners = new Set<(s: IndexStatus | null) => void>();
 	private statusBar!: HTMLElement;
 	private eventOffs: Array<() => void> = [];
+	// Boot can spend minutes in ensureBackend() (first-run downloads); if the
+	// user disables the plugin in that window, onunload() runs with nothing to
+	// stop yet. This flag lets the still-running boot notice it's now working
+	// for a dead plugin and back out instead of spawning the sidecar and
+	// registering vault events that nothing will ever clean up.
+	private unloaded = false;
+	// Single-flight guard: two overlapping boots would each spawn a sidecar,
+	// whose lockfile takeovers then kill each other in an endless restart war.
+	private bootPromise: Promise<void> | null = null;
+	// reindex()'s isIndexing() check sits before an await; this synchronous flag
+	// closes that window so a second entrant can't stamp interrupted-state or
+	// fire the trailing idle tick that hides the first run's live progress.
+	private reindexInFlight = false;
 
 	async onload(): Promise<void> {
 		await this.loadSettings();
@@ -48,31 +61,33 @@ export default class UruPlugin extends Plugin {
 
 		this.registerView(URU_RECALL_VIEW, (leaf: WorkspaceLeaf) => new RecallView(leaf, this));
 		this.registerView(URU_CHAT_VIEW, (leaf: WorkspaceLeaf) => new ChatView(leaf, this));
-		this.addRibbonIcon("search", "Uru Search", () => void this.openRecall());
-		this.addRibbonIcon("message-square", "Uru Chat", () => void this.openChat());
+		this.addRibbonIcon("search", "Uru search", () => void this.openRecall());
+		this.addRibbonIcon("message-square", "Uru chat", () => void this.openChat());
 
+		// Command ids are NOT prefixed with the plugin id — Obsidian already
+		// namespaces them (`uru:recall`).
 		this.addCommand({
-			id: "uru-recall",
+			id: "recall",
 			name: "Search in your vault",
 			callback: () => void this.openRecall(),
 		});
 		this.addCommand({
-			id: "uru-chat",
+			id: "chat",
 			name: "Chat with your vault",
 			callback: () => void this.openChat(),
 		});
 		this.addCommand({
-			id: "uru-index-vault",
+			id: "index-vault",
 			name: "Index vault",
 			callback: () => this.indexVault(),
 		});
 		this.addCommand({
-			id: "uru-force-reindex",
+			id: "force-reindex",
 			name: "Re-index all notes",
 			callback: () => void this.reindex(true),
 		});
 		this.addCommand({
-			id: "uru-resume-indexing",
+			id: "resume-indexing",
 			name: "Resume indexing",
 			checkCallback: (checking) => {
 				const canResume = this.settings.indexInterrupted && !this.isIndexing();
@@ -81,7 +96,7 @@ export default class UruPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
-			id: "uru-stop-indexing",
+			id: "stop-indexing",
 			name: "Stop indexing",
 			checkCallback: (checking) => {
 				const active = this.indexer?.isIndexing ?? false;
@@ -93,8 +108,8 @@ export default class UruPlugin extends Plugin {
 			},
 		});
 		this.addCommand({
-			id: "uru-restart-backend",
-			name: "Restart Uru",
+			id: "restart-backend",
+			name: "Restart the local AI service",
 			callback: () => void this.restartBackend(),
 		});
 
@@ -113,9 +128,8 @@ export default class UruPlugin extends Plugin {
 	}
 
 	async onunload(): Promise<void> {
-		for (const off of this.eventOffs) off();
-		this.eventOffs = [];
-		if (this.indexer) await this.indexer.flush().catch(() => undefined);
+		this.unloaded = true;
+		await this.stopIndexer();
 		if (this.manager) await this.manager.stop();
 	}
 
@@ -132,8 +146,21 @@ export default class UruPlugin extends Plugin {
 		return join(realpathSync(pluginAbs), "sidecar");
 	}
 
-	/** Resolve the backend, start the sidecar, wire indexing. Throws on failure. */
+	/**
+	 * Resolve the backend, start the sidecar, wire indexing. Throws on failure.
+	 * Single-flight: a call while a boot is already running joins that boot
+	 * (its log output stays wired to the first caller) instead of spawning a
+	 * second sidecar on the same database.
+	 */
 	async runBackend(onLog: (s: string) => void): Promise<void> {
+		if (this.bootPromise) return this.bootPromise;
+		this.bootPromise = this.doRunBackend(onLog).finally(() => {
+			this.bootPromise = null;
+		});
+		return this.bootPromise;
+	}
+
+	private async doRunBackend(onLog: (s: string) => void): Promise<void> {
 		this.setStatus("starting", "getting ready");
 		if (!this.settings.vaultKey) {
 			this.settings.vaultKey = randomUUID();
@@ -146,8 +173,16 @@ export default class UruPlugin extends Plugin {
 			runtimeDir: runtimeDir(),
 			log: onLog,
 		});
+		if (this.unloaded) return; // plugin disabled during bootstrap — don't spawn anything
 		await this.persistBackend(backend);
 		await this.startSidecar(backend, vaultDir);
+		if (this.unloaded) {
+			// Disabled while the sidecar was starting, after onunload() found no
+			// manager to stop — undo the spawn ourselves.
+			await this.manager?.stop();
+			this.manager = null;
+			return;
+		}
 		await this.startIndexer(vaultDir);
 	}
 
@@ -156,6 +191,9 @@ export default class UruPlugin extends Plugin {
 		try {
 			await this.runBackend((l) => this.setStatus("starting", l));
 		} catch (e) {
+			// onunload() stopping a mid-boot sidecar surfaces here as a startup
+			// failure — the plugin is gone, so don't flash UI for it.
+			if (this.unloaded) return;
 			this.setStatus("error", (e as Error).message);
 			new Notice(`Uru couldn't start — ${(e as Error).message}`);
 		}
@@ -166,6 +204,10 @@ export default class UruPlugin extends Plugin {
 	}
 
 	async restartBackend(): Promise<void> {
+		if (this.bootPromise) {
+			new Notice("Uru is already starting — hold on…");
+			return;
+		}
 		if (this.manager) {
 			await this.manager.stop();
 			this.manager = null;
@@ -193,11 +235,14 @@ export default class UruPlugin extends Plugin {
 	 */
 	async deleteData(): Promise<void> {
 		if (!this.settings.vaultKey) return; // nothing set up yet — avoid rmSync on an empty-keyed path
+		// Let an in-flight boot settle first, so it can't spawn a sidecar or
+		// indexer into the directories we're about to delete.
+		await this.bootPromise?.catch(() => undefined);
 		if (this.manager) {
 			await this.manager.stop();
 			this.manager = null;
 		}
-		this.indexer = null;
+		await this.stopIndexer();
 		try {
 			rmSync(vaultDataDir(this.settings.vaultKey), { recursive: true, force: true });
 			removeVault(this.settings.vaultKey);
@@ -279,7 +324,24 @@ export default class UruPlugin extends Plugin {
 		}
 	}
 
+	/** Tear down the current Indexer: unhook vault events, flush pending work. */
+	private async stopIndexer(): Promise<void> {
+		for (const off of this.eventOffs) off();
+		this.eventOffs = [];
+		if (this.indexer) {
+			this.indexer.stop();
+			this.indexer.cancelPending();
+			await this.indexer.flush().catch(() => undefined);
+			this.indexer = null;
+		}
+	}
+
 	private async startIndexer(vaultDir: string): Promise<void> {
+		// Every restart/repair path comes through here — retire the previous
+		// Indexer first, or its still-registered vault handlers would keep
+		// firing alongside the new one's (duplicate /remember calls, and two
+		// HashStores clobbering the same index-state.json).
+		await this.stopIndexer();
 		const statePath = join(vaultDir, "index-state.json");
 		this.indexer = new Indexer(
 			this.app,
@@ -376,6 +438,12 @@ export default class UruPlugin extends Plugin {
 		this.indexer?.stop();
 	}
 
+	/** Recompile the ignore globs so live file events honor an edited setting
+	 *  immediately (not only after the next full index). */
+	applyIgnorePatterns(): void {
+		this.indexer?.recompileIgnore();
+	}
+
 	/**
 	 * One-time migration for the removed graph-linking feature: strip the
 	 * "uru-links" frontmatter property it wrote into notes. Gated on the old
@@ -432,6 +500,9 @@ export default class UruPlugin extends Plugin {
 	}
 
 	async runSetup(): Promise<void> {
+		// Don't yank the sidecar out from under an in-flight boot — let it settle,
+		// then the modal's "Install & start" runs a fresh (single-flight) boot.
+		await this.bootPromise?.catch(() => undefined);
 		if (this.manager) await this.manager.stop();
 		this.manager = null;
 		this.openSetup();
@@ -450,10 +521,20 @@ export default class UruPlugin extends Plugin {
 		// A run already owns the interrupted flag and the progress UI — don't let a
 		// concurrent call (e.g. auto-index-on-startup + a manual click) stamp state
 		// or fire an idle tick that would hide the live progress.
-		if (this.isIndexing()) {
+		if (this.isIndexing() || this.reindexInFlight) {
 			new Notice("Uru is already indexing.");
 			return;
 		}
+		this.reindexInFlight = true;
+		try {
+			await this.doReindex(force);
+		} finally {
+			this.reindexInFlight = false;
+		}
+	}
+
+	private async doReindex(force: boolean): Promise<void> {
+		if (!this.indexer) return;
 		this.indexer.recompileIgnore();
 		// Mark a run as in-flight BEFORE it starts and persist, so a crash/quit
 		// mid-run leaves the flag set → the Resume prompt appears next time.

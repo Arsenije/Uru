@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "child_process";
+import { spawn } from "child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { homedir } from "os";
@@ -277,16 +277,25 @@ async function fetchLlamaServer(
 }
 
 /** Run `bin --list-devices`. "gpu": a GPU device is listed. "none": ran but only
- *  CPU. "error": the binary could not be launched at all. */
-function probeGpu(bin: string): "gpu" | "none" | "error" {
-	const res = spawnSync(bin, ["--list-devices"], { encoding: "utf8", timeout: 15000, windowsHide: true });
-	if (res.error) return "error";
-	return hasGpuDevice((res.stdout ?? "") + (res.stderr ?? "")) ? "gpu" : "none";
+ *  CPU. "error": the binary could not be launched (or hung past the timeout).
+ *  Async — this can take up to 15s and must not block the renderer. */
+function probeGpu(bin: string): Promise<"gpu" | "none" | "error"> {
+	return new Promise((resolve) => {
+		const p = spawn(bin, ["--list-devices"], { timeout: 15000, windowsHide: true });
+		let out = "";
+		const cap = (b: Buffer) => (out += b.toString());
+		p.stdout.on("data", cap);
+		p.stderr.on("data", cap);
+		p.on("error", () => resolve("error"));
+		// A signal exit means the timeout killed it — "error", matching the old
+		// sync probe's timeout behavior.
+		p.on("exit", (_code, sig) => resolve(sig ? "error" : hasGpuDevice(out) ? "gpu" : "none"));
+	});
 }
 
 async function ensureLlamaServer(runtimeDir: string, log: (s: string) => void): Promise<string> {
 	const root = join(runtimeDir, "llama.cpp");
-	const gpu = detectGpu();
+	const gpu = await detectGpu();
 
 	// Desired build variant from the detected GPU, unless a previous probe on this
 	// host already established that no usable Vulkan device exists.
@@ -304,7 +313,7 @@ async function ensureLlamaServer(runtimeDir: string, log: (s: string) => void): 
 	// won't launch would otherwise run on CPU silently. Fall back to the CPU build
 	// and remember it so later launches don't re-download the Vulkan build.
 	if (desired === "vulkan") {
-		const probe = probeGpu(bin);
+		const probe = await probeGpu(bin);
 		if (probe !== "gpu") {
 			log(
 				probe === "error"

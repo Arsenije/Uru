@@ -21,7 +21,7 @@ export class ChatView extends ItemView {
 	private progressLabel: HTMLElement | null = null;
 	private lastStatus: IndexStatus | null = null;
 	/** Which gate box is currently rendered — dedupes rebuilds on repeated boot ticks. */
-	private gateMode: "loading" | "error" | "index" | null = null;
+	private gateMode: "loading" | "error" | "index-empty" | "index-progress" | null = null;
 
 	constructor(
 		leaf: WorkspaceLeaf,
@@ -34,7 +34,7 @@ export class ChatView extends ItemView {
 		return URU_CHAT_VIEW;
 	}
 	getDisplayText(): string {
-		return "Uru Chat";
+		return "Uru chat";
 	}
 	getIcon(): string {
 		return "message-square";
@@ -120,14 +120,22 @@ export class ChatView extends ItemView {
 	}
 
 	private applyIndexGate(status: IndexStatus | null): void {
-		this.gateMode = "index";
 		if (status === null) {
 			// Indexing idle. If the vault now has content, lift the gate;
 			// otherwise (never indexed, or stopped before any note) show the prompt.
-			if (this.unindexed) this.renderEmptyState(null);
-			else this.clearGate();
+			if (!this.unindexed) {
+				this.clearGate();
+				return;
+			}
+			// The heartbeat re-emits "ok" every 15s — don't tear down and rebuild
+			// an identical prompt (visible flicker), and never resurrect the
+			// index button after a click already swapped it for the progress bar.
+			if (this.gateMode === "index-empty") return;
+			this.gateMode = "index-empty";
+			this.renderEmptyState(null);
 			return;
 		}
+		this.gateMode = "index-progress";
 		// In-progress tick: update the bar in place if it's showing, else render it.
 		if (this.progressFill && this.progressLabel) {
 			this.updateProgress(status);
@@ -250,7 +258,7 @@ export class ChatView extends ItemView {
 		if (!this.progressFill || !this.progressLabel) return;
 		this.progressFill.parentElement?.removeClass("is-indeterminate");
 		const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
-		this.progressFill.style.width = `${pct}%`;
+		this.progressFill.style.setProperty("--uru-progress", `${pct}%`);
 		const eta = etaSeconds(status);
 		const suffix = eta !== null ? ` · ${formatEta(eta)}` : "…";
 		this.progressLabel.setText(`Indexing ${status.done}/${status.total}${suffix}`);

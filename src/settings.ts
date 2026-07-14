@@ -161,7 +161,7 @@ export class UruSettingTab extends PluginSettingTab {
 			if (status) {
 				interruptedEl.toggle(false);
 				const pct = status.total ? Math.round((status.done / status.total) * 100) : 0;
-				fill.style.width = `${pct}%`;
+				fill.style.setProperty("--uru-progress", `${pct}%`);
 				const eta = etaSeconds(status);
 				const etaTxt = eta !== null ? ` · ${formatEta(eta)}` : "";
 				countEl.setText(
@@ -219,6 +219,10 @@ export class UruSettingTab extends PluginSettingTab {
 				t.setValue(s.ignoreGlobs.join("\n")).onChange(async (v) => {
 					s.ignoreGlobs = v.split("\n").map((x) => x.trim()).filter(Boolean);
 					await this.plugin.saveSettings();
+					// Live file events must honor the new patterns immediately —
+					// waiting for the next full index would keep indexing content
+					// the user just asked Uru to skip.
+					this.plugin.applyIgnorePatterns();
 				});
 				t.inputEl.rows = 4;
 			});
@@ -296,7 +300,9 @@ export class UruSettingTab extends PluginSettingTab {
 	/** Friendly model name (basename, sans .gguf) from a full model path. */
 	private modelName(path: string): string {
 		if (!path) return "(set during setup)";
-		return path.split("/").pop()!.replace(/\.gguf$/i, "");
+		// Split on both separators — paths are built with join(), so Windows
+		// users get backslashes.
+		return path.split(/[\\/]/).pop()!.replace(/\.gguf$/i, "");
 	}
 
 	/** One-line summary of index state for the idle (non-running) view. */
