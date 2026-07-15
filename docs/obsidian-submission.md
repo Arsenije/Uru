@@ -159,9 +159,10 @@ The repo contains more than the plugin, so review scope is worth clarifying:
 ## Trying it
 
 A machine with ~8 GB RAM and ~5 GB free disk is enough. On macOS this needs
-Apple Silicon — Intel Macs are unsupported because Uru's vector database
-(LanceDB) no longer ships Intel-Mac builds; Windows and Linux work on CPU or a
-supported GPU. Install, enable, click **Install & start**,
+Apple Silicon and macOS 13.3+ — Intel Macs are unsupported because Uru's
+vector database (LanceDB) no longer ships Intel-Mac builds, and older macOS
+lacks the Accelerate BLAS routines llama.cpp's release binaries link against;
+Windows and Linux work on CPU or a supported GPU. Install, enable, click **Install & start**,
 wait out the one-time download, then run **Index vault** and try the search and
 chat panels. The status bar shows backend state throughout, and Settings →
 Status has a "Copy diagnostics" button if anything looks wrong.

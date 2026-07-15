@@ -1,7 +1,7 @@
 import { spawn } from "child_process";
 import { chmodSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { homedir } from "os";
+import { homedir, release } from "os";
 import { requestUrl } from "obsidian";
 import {
 	detectGpu,
@@ -360,12 +360,23 @@ async function ensureLlamaServer(runtimeDir: string, log: (s: string) => void): 
  *
  * Apple-Silicon Macs launched under Rosetta also report arch "x64", so the
  * message covers that recoverable case too.
+ *
+ * macOS 13.3 (Ventura) is the floor on Apple Silicon: llama.cpp release
+ * binaries link Accelerate's "new LAPACK"/ILP64 BLAS symbols (e.g.
+ * _cblas_sgemm$NEWLAPACK$ILP64), which Apple added in 13.3 — on older macOS
+ * llama-server aborts at dyld time after the full ~3 GB setup has run.
+ * Darwin kernel 22.4 ↔ macOS 13.3.
  */
+const MIN_DARWIN_MAJOR = 22;
+const MIN_DARWIN_MINOR = 4;
+
 export function assertSupportedPlatform(
 	platform: NodeJS.Platform = process.platform,
 	arch: string = process.arch,
+	osRelease: string = release(),
 ): void {
-	if (platform === "darwin" && arch !== "arm64") {
+	if (platform !== "darwin") return;
+	if (arch !== "arm64") {
 		throw new Error(
 			"Uru requires an Apple Silicon Mac (M1 or newer). Uru's local vector " +
 				"database, LanceDB, no longer ships builds for Intel Macs, so it can't " +
@@ -373,6 +384,16 @@ export function assertSupportedPlatform(
 				"it's running Obsidian through Rosetta: quit Obsidian, then in Finder " +
 				"open Applications, right-click Obsidian → Get Info, untick “Open using " +
 				"Rosetta”, and start Uru again.",
+		);
+	}
+	const [major = 0, minor = 0] = osRelease.split(".").map(Number);
+	if (major < MIN_DARWIN_MAJOR || (major === MIN_DARWIN_MAJOR && minor < MIN_DARWIN_MINOR)) {
+		throw new Error(
+			"Uru requires macOS 13.3 (Ventura) or newer. Uru's local AI engine, " +
+				"llama.cpp, uses math routines Apple added to macOS in version 13.3, " +
+				"so it can't start on this version of macOS. Update macOS (Apple " +
+				"menu → System Settings/Preferences → Software Update) and start " +
+				"Uru again.",
 		);
 	}
 }

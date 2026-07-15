@@ -17,7 +17,7 @@ It's powered by [Khora](https://github.com/DeytaHQ/khora), a local-first search-
 
 ## Get started
 
-**Requirements:** Obsidian on **desktop** — macOS (**Apple Silicon only**), Windows, or Linux. Uru runs a local backend, so mobile isn't supported, and Intel Macs aren't supported because Uru's vector database no longer ships Intel-Mac builds. No Python, no GPU, no manual model setup — Uru downloads everything it needs on first run.
+**Requirements:** Obsidian on **desktop** — macOS (**Apple Silicon only, macOS 13.3 or newer**), Windows, or Linux. Uru runs a local backend, so mobile isn't supported; Intel Macs aren't supported because Uru's vector database no longer ships Intel-Mac builds, and macOS 13.3+ is needed because Uru's local AI engine relies on math routines Apple added in that release. No Python, no GPU, no manual model setup — Uru downloads everything it needs on first run.
 
 1. **Install.** In Obsidian: **Settings → Community plugins → Browse**, search for **Uru** (or open its [directory page](https://community.obsidian.md/plugins/uru)), install, and enable.
 2. **Run setup.** A dialog opens — click **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
