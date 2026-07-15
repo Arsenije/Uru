@@ -6,7 +6,7 @@ Uru makes your [Obsidian](https://obsidian.md) vault searchable by meaning and l
 
 It's powered by [Khora](https://github.com/DeytaHQ/khora), a local-first search-and-connections library. Obsidian can't run Python, so Uru ships a tiny local backend that drives Khora for you — you never have to touch it.
 
-![Uru](docs/uru_screenshot.png)
+![Uru](docs/uru_screenshot_2.png)
 
 ## What you can do
 
