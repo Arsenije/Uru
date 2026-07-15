@@ -17,114 +17,13 @@ It's powered by [Khora](https://github.com/DeytaHQ/khora), a local-first search-
 
 ## Get started
 
-> 💡 **Installing with an AI assistant?** Hand it the [For AI assistants](#for-ai-assistants) section below — it's a deterministic, copy-paste procedure with explicit success checks. Most people install Uru this way.
+**Requirements:** Obsidian on **desktop** (macOS / Windows / Linux — Uru runs a local backend, so mobile isn't supported). No Python, no GPU, no manual model setup — Uru downloads everything it needs on first run.
 
-**Requirements:** Obsidian on **desktop** (macOS / Windows / Linux — Uru runs a local backend, so mobile isn't supported), and **[Node.js](https://nodejs.org) 18+** *only if you build from source*. No Python, no GPU, no manual model setup — Uru downloads everything it needs on first run.
+1. **Install.** In Obsidian: **Settings → Community plugins → Browse**, search for **Uru** (or open its [directory page](https://community.obsidian.md/plugins/uru)), install, and enable.
+2. **Run setup.** A dialog opens — click **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
+3. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Search in your vault"** or open the chat (💬 ribbon icon).
 
-### Install from Community plugins
-
-Once Uru is listed in Obsidian's community directory: **Settings → Community plugins → Browse**, search for **Uru**, install, and enable. (Until the listing is live, use a manual install below.)
-
-### Install manually
-
-**Option A — prebuilt release (no Node needed):** download **`main.js`**, **`manifest.json`**, and **`styles.css`** from the **Assets** section of the [latest release](../../releases/latest) — ⚠️ **not** the "Source code (zip)" link, which omits the built `main.js` and fails to load. Put the three files in `<your-vault>/.obsidian/plugins/uru/` (the Python sidecar is embedded inside `main.js`).
-
-> With the [GitHub CLI](https://cli.github.com), one command grabs the right assets: `gh release download --repo Arsenije/Uru --pattern 'main.js' --pattern 'manifest.json' --pattern 'styles.css' --dir "<your-vault>/.obsidian/plugins/uru"`. The download is small (~150 KB) — that's expected: the backend's dependencies and models download on first run.
-
-**Option B — build from source (needs [Node.js](https://nodejs.org) 18+):** one command builds it and copies everything into place:
-```bash
-git clone https://github.com/Arsenije/Uru.git
-cd Uru
-npm install
-npm run install-plugin -- "<your-vault>"    # builds, then deploys into .obsidian/plugins/uru/
-```
-
-Then, either way:
-
-3. **Enable it.** In Obsidian: **Settings → Community plugins → enable Uru**.
-4. **Run setup.** A dialog opens — click **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
-5. **Use it.** When the status bar reads **`Uru ✓`**, run the command **"Uru: Index vault"**, then **"Uru: Search in your vault"** or open the chat (💬 ribbon icon).
-
-### For AI assistants
-
-This procedure is safe to run end-to-end. Steps 1–2 are shell commands; steps 3–5 happen inside Obsidian's GUI, so **stop after step 2 and tell the user exactly what to click.**
-
-```
-GOAL: Install the Uru Obsidian plugin into the user's vault.
-
-INPUTS YOU NEED FROM THE USER:
-  - VAULT  = absolute path to their Obsidian vault (the folder containing `.obsidian/`)
-
-STEP 1 — get the plugin files. Pick ONE:
-
-  Option A — prebuilt release (no Node toolchain needed; prefer this):
-    With the GitHub CLI (one command, always the right assets):
-      gh release download --repo Arsenije/Uru \
-        --pattern 'main.js' --pattern 'manifest.json' --pattern 'styles.css' \
-        --dir "<VAULT>/.obsidian/plugins/uru"
-      # no tag = newest release. `gh release view --repo Arsenije/Uru` (no tag)
-      # shows the latest; the literal word `latest` is NOT a valid tag argument.
-    Without gh, download the main.js, manifest.json, and styles.css ASSETS from
-    https://github.com/Arsenije/Uru/releases/latest by hand into
-    `<VAULT>/.obsidian/plugins/uru/`.
-    IMPORTANT: use the individual assets, NOT GitHub's "Source code (zip)" — the
-    source archive has no built main.js, so the plugin will fail to load.
-    NOTE: the assets are small (~150 KB total) — expected, NOT a broken/partial
-    download. The Python sidecar is embedded in main.js; its dependencies and
-    the models install on first run.
-
-  Option B — build from source (requires Node.js 18+):
-    git clone https://github.com/Arsenije/Uru.git
-    cd Uru
-    npm install
-    npm run install-plugin -- "<VAULT>"   # builds AND copies the plugin files
-                                          # into .obsidian/plugins/uru/
-
-STEP 2 — VERIFY staging (headless; this is as far as you can verify — everything
-  after this is GUI-only and only the user can confirm it):
-  Run the SAME checker for either install path — it prints "OK: Uru <version> staged ...":
-    Option B (source clone):     node scripts/verify-staging.mjs "<VAULT>"
-    Option A (release assets), or either without a local copy: curl -fsSL \
-      https://raw.githubusercontent.com/Arsenije/Uru/main/scripts/verify-staging.mjs \
-      | node - "<VAULT>"
-  The checker confirms main.js (with the embedded sidecar), manifest.json, and
-  styles.css are present and non-empty. Do NOT hand off until it prints "OK:".
-
-STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
-  Tell them: "Open Obsidian → Settings → Community plugins → enable 'Uru'.
-  A setup dialog appears — click 'Install & start'. The first run downloads
-  ~3 GB; wait for it."
-
-STEP 4 — tell them the success signal:
-  The Obsidian status bar shows `Uru ✓`. If it shows `Uru ✕`, the setup
-  dialog (and Settings → Uru) has a "Copy diagnostics" button — ask for that text.
-
-STEP 5 — tell them how to use it:
-  Run the command "Uru: Index vault", then "Uru: Search in your vault" or the 💬 chat icon.
-
-DO NOT:
-  - Try to install on Obsidian mobile (desktop only).
-  - Place files outside `<VAULT>/.obsidian/plugins/uru/`.
-  - Install Python, llama.cpp, or models by hand — Uru bootstraps them itself.
-```
-
-**Facts for assistants** (stable, machine-readable):
-
-| Key | Value |
-|---|---|
-| Plugin id | `uru` |
-| Plugin files to deploy | `main.js` (carries the embedded Python sidecar), `manifest.json`, `styles.css` |
-| Deploy target | `<VAULT>/.obsidian/plugins/uru/` |
-| Install from source (build + deploy) | `npm install && npm run install-plugin -- "<VAULT>"` |
-| Headless staging check (source clone) | `node scripts/verify-staging.mjs "<VAULT>"` |
-| Release-asset download (GitHub CLI) | `gh release download --repo Arsenije/Uru --pattern 'main.js' --pattern 'manifest.json' --pattern 'styles.css' --dir "<VAULT>/.obsidian/plugins/uru"` |
-| Release-assets size | ~150 KB total (sidecar embedded in main.js; deps download on first run) |
-| Platforms | macOS, Windows, Linux (desktop only; **no mobile**) |
-| Runtime prerequisites | None — Python 3.13, llama.cpp, and models auto-download on first run |
-| First-run download | ~3 GB (chat model + embedding model + llama.cpp runtime) |
-| Ready signal | Status bar reads `Uru ✓` |
-| Error signal | Status bar reads `Uru ✕`; use the "Copy diagnostics" button |
-| Backend/data location | Outside the vault, in per-user app-data (see [Privacy](#privacy)) |
+Installing without the community directory, or with an AI assistant's help? See [Install manually](#install-manually) near the bottom.
 
 ## Privacy
 
@@ -229,6 +128,115 @@ Why this one:
 - **1024 dimensions** at `Q8_0` keeps vectors compact while preserving quality. This dimension is *fixed*: it defines the shape of every stored vector, so switching embedding models later requires a full re-index.
 
 Like the chat model, it runs locally via llama.cpp — your notes are never uploaded.
+
+<a name="install-manually"></a>
+<details>
+<summary><b>Install manually</b></summary>
+
+If you'd rather not install through the community directory, Uru installs like any other manual plugin.
+
+> 💡 **Installing with an AI assistant?** Hand it the [For AI assistants](#for-ai-assistants) section below — it's a deterministic, copy-paste procedure with explicit success checks.
+
+**Option A — prebuilt release (no Node needed):** download **`main.js`**, **`manifest.json`**, and **`styles.css`** from the **Assets** section of the [latest release](../../releases/latest) — ⚠️ **not** the "Source code (zip)" link, which omits the built `main.js` and fails to load. Put the three files in `<your-vault>/.obsidian/plugins/uru/` (the Python sidecar is embedded inside `main.js`).
+
+> With the [GitHub CLI](https://cli.github.com), one command grabs the right assets: `gh release download --repo Arsenije/Uru --pattern 'main.js' --pattern 'manifest.json' --pattern 'styles.css' --dir "<your-vault>/.obsidian/plugins/uru"`. The download is small (~150 KB) — that's expected: the backend's dependencies and models download on first run.
+
+**Option B — build from source (needs [Node.js](https://nodejs.org) 18+):** one command builds it and copies everything into place:
+```bash
+git clone https://github.com/Arsenije/Uru.git
+cd Uru
+npm install
+npm run install-plugin -- "<your-vault>"    # builds, then deploys into .obsidian/plugins/uru/
+```
+
+Then, either way: enable Uru in **Settings → Community plugins** and continue from step 2 of [Get started](#get-started).
+
+</details>
+
+<a name="for-ai-assistants"></a>
+<details>
+<summary><b>For AI assistants</b></summary>
+
+This procedure is safe to run end-to-end. Steps 1–2 are shell commands; steps 3–5 happen inside Obsidian's GUI, so **stop after step 2 and tell the user exactly what to click.**
+
+```
+GOAL: Install the Uru Obsidian plugin into the user's vault.
+
+INPUTS YOU NEED FROM THE USER:
+  - VAULT  = absolute path to their Obsidian vault (the folder containing `.obsidian/`)
+
+STEP 1 — get the plugin files. Pick ONE:
+
+  Option A — prebuilt release (no Node toolchain needed; prefer this):
+    With the GitHub CLI (one command, always the right assets):
+      gh release download --repo Arsenije/Uru \
+        --pattern 'main.js' --pattern 'manifest.json' --pattern 'styles.css' \
+        --dir "<VAULT>/.obsidian/plugins/uru"
+      # no tag = newest release. `gh release view --repo Arsenije/Uru` (no tag)
+      # shows the latest; the literal word `latest` is NOT a valid tag argument.
+    Without gh, download the main.js, manifest.json, and styles.css ASSETS from
+    https://github.com/Arsenije/Uru/releases/latest by hand into
+    `<VAULT>/.obsidian/plugins/uru/`.
+    IMPORTANT: use the individual assets, NOT GitHub's "Source code (zip)" — the
+    source archive has no built main.js, so the plugin will fail to load.
+    NOTE: the assets are small (~150 KB total) — expected, NOT a broken/partial
+    download. The Python sidecar is embedded in main.js; its dependencies and
+    the models install on first run.
+
+  Option B — build from source (requires Node.js 18+):
+    git clone https://github.com/Arsenije/Uru.git
+    cd Uru
+    npm install
+    npm run install-plugin -- "<VAULT>"   # builds AND copies the plugin files
+                                          # into .obsidian/plugins/uru/
+
+STEP 2 — VERIFY staging (headless; this is as far as you can verify — everything
+  after this is GUI-only and only the user can confirm it):
+  Run the SAME checker for either install path — it prints "OK: Uru <version> staged ...":
+    Option B (source clone):     node scripts/verify-staging.mjs "<VAULT>"
+    Option A (release assets), or either without a local copy: curl -fsSL \
+      https://raw.githubusercontent.com/Arsenije/Uru/main/scripts/verify-staging.mjs \
+      | node - "<VAULT>"
+  The checker confirms main.js (with the embedded sidecar), manifest.json, and
+  styles.css are present and non-empty. Do NOT hand off until it prints "OK:".
+
+STEP 3 — HAND OFF TO THE USER (you cannot click Obsidian's UI):
+  Tell them: "Open Obsidian → Settings → Community plugins → enable 'Uru'.
+  A setup dialog appears — click 'Install & start'. The first run downloads
+  ~3 GB; wait for it."
+
+STEP 4 — tell them the success signal:
+  The Obsidian status bar shows `Uru ✓`. If it shows `Uru ✕`, the setup
+  dialog (and Settings → Uru) has a "Copy diagnostics" button — ask for that text.
+
+STEP 5 — tell them how to use it:
+  Run the command "Uru: Index vault", then "Uru: Search in your vault" or the 💬 chat icon.
+
+DO NOT:
+  - Try to install on Obsidian mobile (desktop only).
+  - Place files outside `<VAULT>/.obsidian/plugins/uru/`.
+  - Install Python, llama.cpp, or models by hand — Uru bootstraps them itself.
+```
+
+**Facts for assistants** (stable, machine-readable):
+
+| Key | Value |
+|---|---|
+| Plugin id | `uru` |
+| Plugin files to deploy | `main.js` (carries the embedded Python sidecar), `manifest.json`, `styles.css` |
+| Deploy target | `<VAULT>/.obsidian/plugins/uru/` |
+| Install from source (build + deploy) | `npm install && npm run install-plugin -- "<VAULT>"` |
+| Headless staging check (source clone) | `node scripts/verify-staging.mjs "<VAULT>"` |
+| Release-asset download (GitHub CLI) | `gh release download --repo Arsenije/Uru --pattern 'main.js' --pattern 'manifest.json' --pattern 'styles.css' --dir "<VAULT>/.obsidian/plugins/uru"` |
+| Release-assets size | ~150 KB total (sidecar embedded in main.js; deps download on first run) |
+| Platforms | macOS, Windows, Linux (desktop only; **no mobile**) |
+| Runtime prerequisites | None — Python 3.13, llama.cpp, and models auto-download on first run |
+| First-run download | ~3 GB (chat model + embedding model + llama.cpp runtime) |
+| Ready signal | Status bar reads `Uru ✓` |
+| Error signal | Status bar reads `Uru ✕`; use the "Copy diagnostics" button |
+| Backend/data location | Outside the vault, in per-user app-data (see [Privacy](#privacy)) |
+
+</details>
 
 <details>
 <summary><b>Build & develop from source</b></summary>
