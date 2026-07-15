@@ -173,7 +173,7 @@ export class ChatView extends ItemView {
 		this.progressFill = this.progressLabel = null;
 		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
 		this.emptyEl = box;
-		box.createEl("div", { cls: "uru-empty-title", text: "Uru is starting up…" });
+		box.createDiv({ cls: "uru-empty-title", text: "Uru is starting up…" });
 		box.createEl("p", {
 			cls: "uru-empty-copy",
 			text: "Uru is starting up — this can take a moment on first launch.",
@@ -191,7 +191,7 @@ export class ChatView extends ItemView {
 		this.progressFill = this.progressLabel = null;
 		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
 		this.emptyEl = box;
-		box.createEl("div", { cls: "uru-empty-title", text: "Uru couldn't start" });
+		box.createDiv({ cls: "uru-empty-title", text: "Uru couldn't start" });
 		box.createEl("p", {
 			cls: "uru-empty-copy",
 			text: detail || "Uru couldn't start. Give it another try or check the settings.",
@@ -212,7 +212,7 @@ export class ChatView extends ItemView {
 			status === null && !this.plugin.isIndexing() && this.plugin.settings.indexInterrupted;
 		const box = this.messagesEl.createDiv({ cls: "uru-empty" });
 		this.emptyEl = box;
-		box.createEl("div", { cls: "uru-empty-title", text: "Chat with your vault" });
+		box.createDiv({ cls: "uru-empty-title", text: "Chat with your vault" });
 		box.createEl("p", {
 			cls: "uru-empty-copy",
 			text: interrupted
@@ -284,7 +284,7 @@ export class ChatView extends ItemView {
 	private renderCitations(parent: HTMLElement, citations: ChatCitation[]): void {
 		if (!citations.length) return;
 		const box = parent.createDiv({ cls: "uru-chat-sources" });
-		box.createEl("div", { cls: "uru-recall-section", text: "Sources" });
+		box.createDiv({ cls: "uru-recall-section", text: "Sources" });
 		for (const c of citations) {
 			const link = box.createEl("a", { cls: "uru-chat-cite", text: `[${c.index}] ${c.title}` });
 			link.addEventListener("click", () =>

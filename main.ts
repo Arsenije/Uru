@@ -465,8 +465,8 @@ export default class UruPlugin extends Plugin {
 		try {
 			const paths = new Set<string>();
 			try {
-				const d = JSON.parse(readFileSync(ledgerPath, "utf8"));
-				if (Array.isArray(d?.paths)) for (const p of d.paths) paths.add(p);
+				const d = JSON.parse(readFileSync(ledgerPath, "utf8")) as { paths?: unknown[] };
+				if (Array.isArray(d.paths)) for (const p of d.paths) if (typeof p === "string") paths.add(p);
 			} catch {
 				/* corrupt ledger — the scan below still finds every linked note */
 			}
@@ -479,7 +479,7 @@ export default class UruPlugin extends Plugin {
 				const file = this.app.vault.getAbstractFileByPath(path);
 				if (!(file instanceof TFile)) continue;
 				try {
-					await this.app.fileManager.processFrontMatter(file, (fm) => {
+					await this.app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
 						if (PROP in fm) {
 							delete fm[PROP];
 							cleaned++;
@@ -638,7 +638,7 @@ export default class UruPlugin extends Plugin {
 			// The config folder is user-relocatable, so its glob can't live in the
 			// static defaults — resolve it from the vault at load time.
 			{ ignoreGlobs: defaultIgnoreGlobs(this.app) },
-			await this.loadData(),
+			(await this.loadData()) as Partial<UruSettings>,
 		);
 	}
 
