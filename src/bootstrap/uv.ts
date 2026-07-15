@@ -353,11 +353,37 @@ async function ensureLlamaServer(runtimeDir: string, log: (s: string) => void): 
 // ---- entrypoint --------------------------------------------------------
 
 /**
+ * Intel Macs are unsupported: LanceDB (khora's vector store) dropped x86_64-mac
+ * wheels in v0.30, and khora requires >=0.30, so the venv install is
+ * unsatisfiable on Intel. Fail fast with a plain-language reason instead of
+ * letting users hit uv's raw "no matching platform tag" resolver error.
+ *
+ * Apple-Silicon Macs launched under Rosetta also report arch "x64", so the
+ * message covers that recoverable case too.
+ */
+export function assertSupportedPlatform(
+	platform: NodeJS.Platform = process.platform,
+	arch: string = process.arch,
+): void {
+	if (platform === "darwin" && arch !== "arm64") {
+		throw new Error(
+			"Uru requires an Apple Silicon Mac (M1 or newer). Uru's local vector " +
+				"database, LanceDB, no longer ships builds for Intel Macs, so it can't " +
+				"be installed on this processor. If your Mac does have Apple Silicon, " +
+				"it's running Obsidian through Rosetta: quit Obsidian, then in Finder " +
+				"open Applications, right-click Obsidian → Get Info, untick “Open using " +
+				"Rosetta”, and start Uru again.",
+		);
+	}
+}
+
+/**
  * Resolve a working backend, bootstrapping into the shared app-data runtime if
  * needed. Dev fast-path (repo-local venv + models + llama.cpp) is reused as-is.
  */
 export async function ensureBackend(ctx: BootstrapContext): Promise<BackendPaths> {
 	const { pluginSidecarDir, runtimeDir, log } = ctx;
+	assertSupportedPlatform();
 	mkdirSync(runtimeDir, { recursive: true });
 
 	// 1) Dev fast path — everything cached in the repo. Only reuse it if the

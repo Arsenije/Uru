@@ -36,6 +36,9 @@ await esbuild.build({
 		// that consume the build-time khora pin.
 		__KHORA_VERSION__: JSON.stringify(readKhoraPin()),
 	},
+	// The real `obsidian` module only exists inside Electron; swap in a stub so
+	// tests can bundle src files that import it (e.g. src/bootstrap/uv.ts).
+	alias: { obsidian: join(process.cwd(), "tests", "support", "obsidian-stub.mjs") },
 	// Same virtual:sidecar-files module as the real build, so tests can import
 	// modules that consume the embedded sidecar (src/bootstrap/uv.ts).
 	plugins: [sidecarEmbedPlugin()],

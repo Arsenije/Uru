@@ -17,7 +17,7 @@ It's powered by [Khora](https://github.com/DeytaHQ/khora), a local-first search-
 
 ## Get started
 
-**Requirements:** Obsidian on **desktop** (macOS / Windows / Linux — Uru runs a local backend, so mobile isn't supported). No Python, no GPU, no manual model setup — Uru downloads everything it needs on first run.
+**Requirements:** Obsidian on **desktop** — macOS (**Apple Silicon only**), Windows, or Linux. Uru runs a local backend, so mobile isn't supported, and Intel Macs aren't supported because Uru's vector database no longer ships Intel-Mac builds. No Python, no GPU, no manual model setup — Uru downloads everything it needs on first run.
 
 1. **Install.** In Obsidian: **Settings → Community plugins → Browse**, search for **Uru** (or open its [directory page](https://community.obsidian.md/plugins/uru)), install, and enable.
 2. **Run setup.** A dialog opens — click **Install & start**. The first run downloads ~3 GB and sets up a few components. This is one-time; later launches are fast.
@@ -74,7 +74,7 @@ If you already removed the plugin without doing step 1, see
 | Your setup | What to expect |
 |---|---|
 | **Apple Silicon (M1–M4)** | Best experience — the models run on the Metal GPU. Indexing is near-instant; chat is snappy. |
-| **Intel Macs** | CPU-only. Indexing is fine; chat answers take a bit longer. |
+| **Intel Macs** | Not supported. Uru's vector database (LanceDB) stopped shipping Intel-Mac builds, so it can't be installed. (Apple Silicon Macs running Obsidian under Rosetta hit this too — turn Rosetta off in Finder → Obsidian → Get Info.) |
 | **Windows / Linux + GPU** | Uru auto-detects a supported GPU (AMD, Nvidia, or Intel) and runs the models on it via a Vulkan build of llama.cpp — much faster. Falls back to CPU automatically if no usable GPU is found. |
 | **Windows / Linux, no GPU** | CPU builds of llama.cpp. Indexing is fine; chat answers take a bit longer. |
 | **Memory** | A few GB of RAM while running (a 3B chat model plus an embedding model stay resident). Closing the panels lets the backend idle-shut-down after ~2 min. |
