@@ -5,6 +5,14 @@ All notable changes to Uru are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] — 2026-07-20
+
+### Fixed
+- **Obsidian plugin-review lint warnings cleared.** The community reviewer runs `eslint-plugin-obsidianmd` with typescript-eslint's `recommendedTypeChecked`, which flagged 175+ `no-unsafe-*` warnings on ordinary Node builtin calls (`join`, `existsSync`, `execFile`…). These were false positives caused by Node's ambient types not resolving in the reviewer's program. The dev toolchain now mirrors the reviewer's (ESLint 9 / typescript-eslint 8 / TypeScript 5 / `@types/node` 18) via a flat `eslint.config.mjs`, and `tsconfig` adds `types: ["node"]`, `skipLibCheck`, and a wider `lib` so builtins always resolve — clearing all ~396 unsafe warnings. `npm run lint` now runs exactly what the reviewer runs.
+
+### Changed
+- **Network calls use Obsidian's `requestUrl()`.** The sidecar client now calls `requestUrl()` instead of `fetch()`, per the plugin guidelines. Because `requestUrl` buffers the response, chat NDJSON events now arrive together rather than token-by-token; the event-driven consumer and `chatSync` fallback are otherwise unchanged.
+
 ## [0.1.12] — 2026-07-14
 
 ### Fixed
