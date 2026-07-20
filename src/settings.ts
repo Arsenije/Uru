@@ -141,7 +141,6 @@ export class UruSettingTab extends PluginSettingTab {
 			})
 			.addButton((b) => {
 				stopBtn = b
-					.setWarning()
 					.setButtonText("Stop")
 					.setTooltip("Stop after the current note finishes")
 					.onClick(() => {
@@ -262,7 +261,7 @@ export class UruSettingTab extends PluginSettingTab {
 				.setDesc("Checking other vaults…")
 				.addButton((b) => {
 					removeAllBtn = b
-						.setWarning()
+						.setDestructive()
 						.setButtonText("Uninstall")
 						.onClick(() => void this.confirmDelete());
 				});
