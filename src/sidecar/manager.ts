@@ -32,7 +32,7 @@ const RESTART_BACKOFF_MS = [1_000, 2_000, 5_000, 10_000, 30_000];
 function execCapture(cmd: string, args: string[]): Promise<string> {
 	return new Promise((resolve, reject) => {
 		execFile(cmd, args, { encoding: "utf8", windowsHide: true }, (err, stdout) =>
-			err ? reject(err instanceof Error ? err : new Error(String(err))) : resolve(stdout),
+			err ? reject(err instanceof Error ? err : new Error(`${cmd} failed`)) : resolve(stdout),
 		);
 	});
 }
@@ -260,8 +260,8 @@ export class SidecarManager {
 	private async takeOverExisting(): Promise<void> {
 		if (existsSync(this.spec.lockPath)) {
 			try {
-				const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8"));
-				if (Number.isInteger(pid)) {
+				const { pid } = JSON.parse(readFileSync(this.spec.lockPath, "utf8")) as { pid?: unknown };
+				if (typeof pid === "number" && Number.isInteger(pid)) {
 					if (await SidecarManager.looksLikeOurs(pid)) {
 						SidecarManager.killTree(pid, "SIGKILL");
 					} else {

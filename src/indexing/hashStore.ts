@@ -49,7 +49,7 @@ export class HashStore {
 	private readIfValid(path: string): Record<string, IndexEntry> | null {
 		try {
 			if (!existsSync(path)) return null;
-			return JSON.parse(readFileSync(path, "utf8"));
+			return JSON.parse(readFileSync(path, "utf8")) as Record<string, IndexEntry>;
 		} catch {
 			return null;
 		}

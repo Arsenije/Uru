@@ -125,8 +125,14 @@ export class SidecarClient {
 	}
 
 	/**
-	 * Streaming chat (RAG). Yields sources, then answer tokens. Uses fetch for
-	 * the streaming body; callers should fall back to chatSync() if it throws.
+	 * Streaming chat (RAG). Yields sources, then answer tokens.
+	 *
+	 * This is the one place we use fetch() instead of Obsidian's requestUrl():
+	 * requestUrl buffers the entire response before returning, so it cannot
+	 * stream tokens as they arrive. baseUrl is always our own loopback sidecar
+	 * (127.0.0.1), so the CORS concern requestUrl exists to solve doesn't apply.
+	 * If the renderer blocks fetch streaming, callers fall back to chatSync(),
+	 * which uses requestUrl.
 	 */
 	async *chatStream(
 		query: string,

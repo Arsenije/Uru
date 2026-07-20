@@ -56,7 +56,7 @@ export function applyTouch(reg: Registry, entry: VaultRegistryEntry): Registry {
 function readRegistry(): Registry | null {
 	try {
 		if (!existsSync(registryPath())) return {};
-		return JSON.parse(readFileSync(registryPath(), "utf8"));
+		return JSON.parse(readFileSync(registryPath(), "utf8")) as Registry;
 	} catch {
 		return null;
 	}
