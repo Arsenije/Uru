@@ -11,11 +11,20 @@
 		"importHelpers": true,
 		"isolatedModules": true,
 		"strictNullChecks": true,
+		// Node builtins (fs/path/os/child_process/crypto) — declared explicitly so
+		// the reviewer's type-checked lint always resolves them. Without this the
+		// program falls back to the TS `error` type, which the no-unsafe-* rules
+		// then flag on every builtin call (175+ false positives at review time).
+		"types": [
+			"node"
+		],
+		// obsidian.d.ts references @codemirror/* (a peer dep we don't bundle) and
+		// has a self-inconsistency; without skipLibCheck those .d.ts errors cascade
+		// into the same `error`-typed fallout across our own files.
+		"skipLibCheck": true,
 		"lib": [
 			"DOM",
-			"ES5",
-			"ES6",
-			"ES7"
+			"ES2018"
 		]
 	},
 	"include": [

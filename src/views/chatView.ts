@@ -325,8 +325,8 @@ export class ChatView extends ItemView {
 		let answer = "";
 		let citations: ChatCitation[] = [];
 		try {
-			// Prefer streaming; fall back to a single non-streaming call if the
-			// renderer blocks fetch streaming.
+			// Prefer the event stream; fall back to a single non-streaming call
+			// if it fails.
 			try {
 				for await (const ev of client.chatStream(query, historySnapshot, note)) {
 					if (ev.event === "sources") {
