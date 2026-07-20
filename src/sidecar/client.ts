@@ -125,44 +125,36 @@ export class SidecarClient {
 	}
 
 	/**
-	 * Streaming chat (RAG). Yields sources, then answer tokens.
+	 * Chat (RAG). Yields sources, then answer tokens, in order.
 	 *
-	 * This is the one place we use fetch() instead of Obsidian's requestUrl():
-	 * requestUrl buffers the entire response before returning, so it cannot
-	 * stream tokens as they arrive. baseUrl is always our own loopback sidecar
-	 * (127.0.0.1), so the CORS concern requestUrl exists to solve doesn't apply.
-	 * If the renderer blocks fetch streaming, callers fall back to chatSync(),
-	 * which uses requestUrl.
+	 * Obsidian requires requestUrl over fetch for network requests. requestUrl
+	 * buffers the whole response before returning, so we still hit the streaming
+	 * endpoint but the sidecar's NDJSON events arrive together rather than
+	 * token-by-token — callers keep their event-driven handling, the answer just
+	 * materializes at once. chatSync() remains a fallback if this call throws.
 	 */
 	async *chatStream(
 		query: string,
 		history: ChatMessage[],
 		note?: NoteContext,
 	): AsyncGenerator<ChatEvent> {
-		const resp = await fetch(`${this.baseUrl}/chat`, {
+		const r = await requestUrl({
+			url: `${this.baseUrl}/chat`,
 			method: "POST",
 			headers: { "content-type": "application/json", ...this.authHeader },
 			body: JSON.stringify({ query, history, stream: true, note }),
+			throw: false,
 		});
-		if (!resp.ok || !resp.body) throw new Error(`chat failed: HTTP ${resp.status}`);
-		const reader = resp.body.getReader();
-		const decoder = new TextDecoder();
-		let buf = "";
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			buf += decoder.decode(value, { stream: true });
-			let nl: number;
-			while ((nl = buf.indexOf("\n")) >= 0) {
-				const line = buf.slice(0, nl).trim();
-				buf = buf.slice(nl + 1);
-				if (line) yield JSON.parse(line) as ChatEvent;
-			}
+		if (r.status < 200 || r.status >= 300) {
+			throw new Error(`chat failed: HTTP ${r.status} ${r.text ?? ""}`);
 		}
-		if (buf.trim()) yield JSON.parse(buf.trim()) as ChatEvent;
+		for (const line of r.text.split("\n")) {
+			const trimmed = line.trim();
+			if (trimmed) yield JSON.parse(trimmed) as ChatEvent;
+		}
 	}
 
-	/** Non-streaming chat via requestUrl (fallback when fetch streaming is blocked). */
+	/** Non-streaming chat via requestUrl (fallback when chatStream throws). */
 	async chatSync(query: string, history: ChatMessage[], note?: NoteContext): Promise<ChatResult> {
 		return this.post<ChatResult>("/chat", { query, history, stream: false, note });
 	}

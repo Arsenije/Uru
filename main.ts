@@ -364,7 +364,7 @@ export default class UruPlugin extends Plugin {
 			void this.reindex(false); // auto-index resumes and clears the flag itself
 		} else if (this.settings.indexInterrupted) {
 			// Nudge only — never auto-run. Resume via the button, command, or chat.
-			new Notice('Indexing didn\'t finish. Run "Resume indexing" to continue.', 8000);
+			new Notice("Indexing didn't finish — open Uru settings to resume.", 8000);
 		}
 	}
 
