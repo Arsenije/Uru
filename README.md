@@ -54,6 +54,30 @@ The backend (the Python environment, models, llama.cpp binary, and the index/dat
 A small `vaults.json` at the root of that folder tracks which vaults are using the shared
 backend, so cleanup never deletes another vault's data out from under it.
 
+### Permissions
+
+Because Uru runs a real local AI service rather than calling a cloud API, it uses a few
+desktop capabilities that most plugins don't. Obsidian's automated review flags these
+categories for every plugin that uses them, so here is exactly what Uru does with each:
+
+- **Direct filesystem access** — used only *outside* your vault, for the app-data folders in
+  the table above: installing the Python environment, models, and llama.cpp binary; storing
+  the per-vault index database and its state file; and maintaining `vaults.json`. (On Linux it
+  also reads `/sys/class/drm` to detect your GPU vendor.) Uru never reads or writes your
+  notes through the filesystem — notes are read through Obsidian's vault API, and the only
+  vault-adjacent touch is resolving the plugin's own folder path at startup.
+- **Shell execution** — Uru starts and supervises its local backend. Every call runs a fixed
+  binary with a fixed argument list (never a shell command built from text, so nothing can be
+  injected): the version-pinned `uv` to build the Python environment, the resulting `python`
+  to run the sidecar, `llama-server --list-devices` to probe for a usable GPU, a PowerShell
+  WMI query on Windows for GPU detection, and `ps`/`pgrep`/`taskkill` to verify and stop the
+  sidecar process safely.
+- **Vault enumeration** — Uru is a search index; listing your Markdown files is how it knows
+  what to index. The list is filtered by your ignore patterns, and file paths go only to the
+  local sidecar on `127.0.0.1`.
+- **Clipboard** — write-only, and only when you click a **Copy diagnostics** button (in
+  Settings or the setup dialog). Uru never reads your clipboard.
+
 **Uninstalling Uru?** It's a two-step process, because Obsidian's plugin remover only deletes
 the plugin's own folder inside your vault — it can't reach outside it:
 
