@@ -1,4 +1,11 @@
-import { App, ButtonComponent, PluginSettingTab, Setting, Notice } from "obsidian";
+import {
+	App,
+	ButtonComponent,
+	PluginSettingTab,
+	Setting,
+	Notice,
+	type SettingDefinitionItem,
+} from "obsidian";
 import type { default as UruPlugin } from "../main";
 import { etaSeconds, formatEta, type IndexStatus } from "./indexing/indexer";
 import { ConfirmModal } from "./views/confirmModal";
@@ -69,11 +76,6 @@ const MODEL_DOCS = {
 } as const;
 
 export class UruSettingTab extends PluginSettingTab {
-	/** Removes the index-progress subscription while the tab is open. */
-	private unsubscribe: (() => void) | null = null;
-	/** Removes the backend-status subscription that keeps the Status row live. */
-	private unsubscribeStatus: (() => void) | null = null;
-
 	constructor(
 		app: App,
 		private plugin: UruPlugin,
@@ -81,26 +83,143 @@ export class UruSettingTab extends PluginSettingTab {
 		super(app, plugin);
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		// Drop any subscriptions left from a previous render before rebuilding.
-		this.unsubscribe?.();
-		this.unsubscribe = null;
-		this.unsubscribeStatus?.();
-		this.unsubscribeStatus = null;
-		containerEl.empty();
+	// Declarative settings (Obsidian 1.13+): static controls are definitions so
+	// they show up in the app-wide settings search; the live rows (status,
+	// index progress, uninstall preflight) stay imperative via `render`, whose
+	// returned cleanup replaces the old display()/hide() subscription bookkeeping.
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		return [
+			{
+				type: "group",
+				heading: "Status",
+				items: [
+					{
+						name: "Uru setup",
+						aliases: ["status", "repair", "diagnostics"],
+						render: (setting) => this.renderStatusRow(setting),
+					},
+				],
+			},
+			{
+				type: "group",
+				heading: "Indexing",
+				items: [
+					{
+						name: "Update the index",
+						aliases: ["reindex", "index vault", "resume indexing"],
+						render: (setting) => this.renderIndexRow(setting),
+					},
+					{
+						name: "Index on startup",
+						desc: "Check for new and edited notes automatically each time Obsidian starts.",
+						control: { type: "toggle", key: "autoIndexOnStartup" },
+					},
+				],
+			},
+			{
+				type: "page",
+				name: "Advanced",
+				items: [
+					{
+						name: "Include frontmatter",
+						desc: "Also index the YAML frontmatter at the top of each note, not just the body.",
+						control: { type: "toggle", key: "includeFrontmatter" },
+					},
+					{
+						name: "Ignore patterns",
+						desc: "Glob patterns for files and folders to skip — one per line.",
+						control: { type: "textarea", key: "ignoreGlobs", rows: 4 },
+					},
+				],
+			},
+			{
+				type: "page",
+				name: "Models",
+				items: [
+					{
+						name: "Chat model",
+						desc: this.modelDesc(this.modelName(this.plugin.settings.chatModelPath), MODEL_DOCS.chat),
+					},
+					{
+						name: "Embedding model",
+						desc: this.modelDesc(
+							`${this.modelName(this.plugin.settings.embedModelPath)} · ${this.plugin.settings.embeddingDimension} dimensions.`,
+							MODEL_DOCS.embedding,
+						),
+					},
+				],
+			},
+			{
+				type: "page",
+				name: "Danger zone",
+				items: [
+					{
+						name: "Nothing to uninstall yet",
+						desc: "Set up Uru first.",
+						searchable: false,
+						visible: () => !this.plugin.settings.vaultKey,
+					},
+					{
+						name: "Uninstall Uru",
+						aliases: ["remove", "delete data", "uninstall"],
+						visible: () => !!this.plugin.settings.vaultKey,
+						render: (setting) => this.renderUninstallRow(setting),
+					},
+				],
+			},
+		];
+	}
+
+	getControlValue(key: string): unknown {
 		const s = this.plugin.settings;
+		switch (key) {
+			case "autoIndexOnStartup":
+				return s.autoIndexOnStartup;
+			case "includeFrontmatter":
+				return s.includeFrontmatter;
+			case "ignoreGlobs":
+				return s.ignoreGlobs.join("\n");
+			default:
+				return undefined;
+		}
+	}
 
-		// ---- Status ---------------------------------------------------------
-		new Setting(containerEl).setName("Status").setHeading();
+	async setControlValue(key: string, value: unknown): Promise<void> {
+		const s = this.plugin.settings;
+		switch (key) {
+			case "autoIndexOnStartup":
+				s.autoIndexOnStartup = Boolean(value);
+				break;
+			case "includeFrontmatter":
+				s.includeFrontmatter = Boolean(value);
+				break;
+			case "ignoreGlobs":
+				s.ignoreGlobs = String(value)
+					.split("\n")
+					.map((x) => x.trim())
+					.filter(Boolean);
+				break;
+			default:
+				return;
+		}
+		await this.plugin.saveSettings();
+		// Live file events must honor the new patterns immediately — waiting for
+		// the next full index would keep indexing content the user just asked
+		// Uru to skip.
+		if (key === "ignoreGlobs") this.plugin.applyIgnorePatterns();
+	}
 
-		const statusRow = new Setting(containerEl)
-			.setName("Uru setup")
-			.setDesc(this.statusLabel())
+	/** Status row: Repair/diagnostics buttons plus a live status line — the
+	 *  sidecar boots asynchronously, so without the subscription the row would
+	 *  stay on "Setting up…" until the tab is reopened. onBackendStatus fires
+	 *  immediately and on every change; we only refresh the desc (no re-render)
+	 *  so setup-progress ticks update smoothly without rebuilding the page. */
+	private renderStatusRow(setting: Setting): () => void {
+		setting
 			.addButton((b) =>
 				b.setButtonText("Repair Uru").onClick(async () => {
 					await this.plugin.runSetup();
-					this.display();
+					this.update();
 				}),
 			)
 			.addButton((b) =>
@@ -109,23 +228,19 @@ export class UruSettingTab extends PluginSettingTab {
 					new Notice("Diagnostics copied");
 				}),
 			);
-		// Keep the status text live: the sidecar boots asynchronously, so without this
-		// the row stays on "Setting up…" until the tab is reopened. onBackendStatus fires
-		// immediately and on every change; we only refresh the desc (no re-render) so
-		// setup-progress ticks update smoothly without rebuilding the page.
-		this.unsubscribeStatus = this.plugin.onBackendStatus(() => {
-			statusRow.setDesc(this.statusLabel());
+		return this.plugin.onBackendStatus(() => {
+			setting.setDesc(this.statusLabel());
 		});
+	}
 
-		// ---- Indexing (action first, then options) -------------------------
-		new Setting(containerEl).setName("Indexing").setHeading();
+	/** Index action row plus the progress bar / interrupted notice it drives. */
+	private renderIndexRow(setting: Setting): () => void {
+		setting.setDesc(this.indexSummary());
 
 		let indexBtn!: ButtonComponent;
 		let forceBtn!: ButtonComponent;
 		let stopBtn!: ButtonComponent;
-		const action = new Setting(containerEl)
-			.setName("Update the index")
-			.setDesc(this.indexSummary())
+		setting
 			.addButton((b) => {
 				indexBtn = b
 					.setCta()
@@ -149,7 +264,12 @@ export class UruSettingTab extends PluginSettingTab {
 					});
 			});
 
-		const progressEl = containerEl.createDiv("uru-index-progress");
+		// The progress bar and interrupted notice are full-width blocks, so they
+		// live as siblings after the row, not inside its flex layout.
+		const interruptedEl = createDiv("uru-index-interrupted");
+		const progressEl = createDiv("uru-index-progress");
+		setting.settingEl.insertAdjacentElement("afterend", interruptedEl);
+		setting.settingEl.insertAdjacentElement("afterend", progressEl);
 		const fill = progressEl
 			.createDiv("uru-index-progress-track")
 			.createDiv("uru-index-progress-fill");
@@ -157,7 +277,6 @@ export class UruSettingTab extends PluginSettingTab {
 		const countEl = meta.createSpan();
 		const currentEl = meta.createSpan({ cls: "uru-index-progress-current" });
 		const hintEl = progressEl.createDiv("uru-index-progress-hint");
-		const interruptedEl = containerEl.createDiv("uru-index-interrupted");
 
 		const apply = (status: IndexStatus | null) => {
 			const active = status !== null;
@@ -188,95 +307,33 @@ export class UruSettingTab extends PluginSettingTab {
 				);
 				interruptedEl.setText(interrupted ? this.interruptedText() : "");
 				interruptedEl.toggle(interrupted);
-				action.setDesc(this.indexSummary());
+				setting.setDesc(this.indexSummary());
 			}
 		};
 		// onIndexStatus fires immediately with the current status, then on each tick.
-		this.unsubscribe = this.plugin.onIndexStatus(apply);
-
-		// "Index on startup" sits with the index action it automates, not in Advanced.
-		new Setting(containerEl)
-			.setName("Index on startup")
-			.setDesc("Check for new and edited notes automatically each time Obsidian starts.")
-			.addToggle((t) =>
-				t.setValue(s.autoIndexOnStartup).onChange(async (v) => {
-					s.autoIndexOnStartup = v;
-					await this.plugin.saveSettings();
-				}),
-			);
-
-		// ---- Advanced (collapsed) ------------------------------------------
-		const advanced = containerEl.createEl("details", { cls: "uru-advanced" });
-		advanced.createEl("summary", { text: "Advanced" });
-
-		new Setting(advanced)
-			.setName("Include frontmatter")
-			.setDesc("Also index the YAML frontmatter at the top of each note, not just the body.")
-			.addToggle((t) =>
-				t.setValue(s.includeFrontmatter).onChange(async (v) => {
-					s.includeFrontmatter = v;
-					await this.plugin.saveSettings();
-				}),
-			);
-
-		new Setting(advanced)
-			.setName("Ignore patterns")
-			.setDesc("Glob patterns for files and folders to skip — one per line.")
-			.addTextArea((t) => {
-				t.setValue(s.ignoreGlobs.join("\n")).onChange(async (v) => {
-					s.ignoreGlobs = v.split("\n").map((x) => x.trim()).filter(Boolean);
-					await this.plugin.saveSettings();
-					// Live file events must honor the new patterns immediately —
-					// waiting for the next full index would keep indexing content
-					// the user just asked Uru to skip.
-					this.plugin.applyIgnorePatterns();
-				});
-				t.inputEl.rows = 4;
-			});
-
-		// ---- Models (collapsed) --------------------------------------------
-		const models = containerEl.createEl("details", { cls: "uru-advanced" });
-		models.createEl("summary", { text: "Models" });
-		new Setting(models)
-			.setName("Chat model")
-			.setDesc(this.modelName(s.chatModelPath))
-			.then((row) => this.addModelLink(row, MODEL_DOCS.chat));
-		new Setting(models)
-			.setName("Embedding model")
-			.setDesc(
-				`${this.modelName(s.embedModelPath)} · ${s.embeddingDimension} dimensions.`,
-			)
-			.then((row) => this.addModelLink(row, MODEL_DOCS.embedding));
-
-		// ---- Danger zone (collapsed) ----------------------------------------
-		const danger = containerEl.createEl("details", { cls: "uru-advanced uru-danger" });
-		danger.createEl("summary", { text: "Danger zone" });
-
-		if (!s.vaultKey) {
-			new Setting(danger).setName("Nothing to uninstall yet").setDesc("Set up Uru first.");
-		} else {
-			let removeAllBtn!: ButtonComponent;
-			const removeAllSetting = new Setting(danger)
-				.setName("Uninstall Uru")
-				.setDesc("Checking other vaults…")
-				.addButton((b) => {
-					removeAllBtn = b
-						.setDestructive()
-						.setButtonText("Uninstall")
-						.onClick(() => void this.confirmDelete());
-				});
-			void this.plugin.deleteDataPreflight().then(({ otherVaults }) => {
-				removeAllSetting.setDesc(this.removeAllDesc(otherVaults));
-				removeAllBtn.setDisabled(Array.isArray(otherVaults) && otherVaults.length > 0);
-			});
-		}
+		const unsubscribe = this.plugin.onIndexStatus(apply);
+		return () => {
+			unsubscribe();
+			// The framework tears down the row itself; the siblings are ours to remove.
+			progressEl.remove();
+			interruptedEl.remove();
+		};
 	}
 
-	hide(): void {
-		this.unsubscribe?.();
-		this.unsubscribe = null;
-		this.unsubscribeStatus?.();
-		this.unsubscribeStatus = null;
+	/** Uninstall row: disabled until the other-vaults preflight comes back clean. */
+	private renderUninstallRow(setting: Setting): void {
+		setting.setDesc("Checking other vaults…");
+		let removeAllBtn!: ButtonComponent;
+		setting.addButton((b) => {
+			removeAllBtn = b
+				.setDestructive()
+				.setButtonText("Uninstall")
+				.onClick(() => void this.confirmDelete());
+		});
+		void this.plugin.deleteDataPreflight().then(({ otherVaults }) => {
+			setting.setDesc(this.removeAllDesc(otherVaults));
+			removeAllBtn.setDisabled(Array.isArray(otherVaults) && otherVaults.length > 0);
+		});
 	}
 
 	/** Plain-language backend status — no raw namespace UUID (kept in diagnostics). */
@@ -294,13 +351,16 @@ export class UruSettingTab extends PluginSettingTab {
 		}
 	}
 
-	/** Append a "Why this model?" link to a (display-only) model row's description. */
-	private addModelLink(row: Setting, href: string): void {
-		row.descEl.createEl("br");
-		row.descEl.createEl("a", {
-			text: "Why this model?",
-			href,
-			attr: { target: "_blank", rel: "noopener" },
+	/** Description for a (display-only) model row: name plus a "Why this model?" link. */
+	private modelDesc(text: string, href: string): DocumentFragment {
+		return createFragment((f) => {
+			f.appendText(text);
+			f.createEl("br");
+			f.createEl("a", {
+				text: "Why this model?",
+				href,
+				attr: { target: "_blank", rel: "noopener" },
+			});
 		});
 	}
 
@@ -371,7 +431,7 @@ export class UruSettingTab extends PluginSettingTab {
 			confirmText: "Uninstall",
 			onConfirm: async () => {
 				await this.plugin.deleteData();
-				this.display();
+				this.update();
 			},
 		}).open();
 	}
