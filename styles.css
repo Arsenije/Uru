@@ -230,24 +230,6 @@
 	font-weight: 500;
 }
 
-/* Uru settings — collapsible groups (Advanced, Models) */
-.uru-advanced {
-	margin: 0.5rem 0;
-	border-top: 1px solid var(--background-modifier-border);
-}
-.uru-advanced > summary {
-	cursor: pointer;
-	padding: 0.6rem 0 0.2rem;
-	font-size: var(--font-ui-smaller);
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	color: var(--text-muted);
-	list-style-position: inside;
-}
-.uru-advanced > summary:hover {
-	color: var(--text-normal);
-}
-
 /* Uru setup modal */
 .uru-setup-log {
 	max-height: 220px;
