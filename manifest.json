@@ -1,7 +1,7 @@
 {
 	"id": "uru",
 	"name": "Uru",
-	"version": "0.1.14",
+	"version": "0.1.15",
 	"minAppVersion": "1.13.0",
 	"description": "Search and chat with your vault using local AI — private, offline, powered by Khora.",
 	"author": "Arsenije",

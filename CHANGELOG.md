@@ -5,6 +5,18 @@ All notable changes to Uru are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] — 2026-07-20
+
+### Changed
+- **Settings appear in Obsidian's settings search.** The settings tab now uses Obsidian 1.13's declarative settings API (`getSettingDefinitions()`) instead of the deprecated `display()`: toggles and the ignore-patterns editor are declarative (and searchable app-wide), the live rows (backend status, indexing progress, uninstall preflight) keep their real-time behavior, and the collapsed Advanced / Models / Danger zone sections became navigable sub-pages.
+- **`minAppVersion` raised from `1.7.2` to `1.13.0`** — the declarative settings API and the `setDestructive()` button style only exist on 1.13+.
+
+### Fixed
+- **Deprecated `setWarning()` replaced.** The Uninstall button and the confirmation dialog's confirm button now use `setDestructive()` (the dialog's as a destructive primary action); the Stop-indexing button drops the warning styling entirely, since stopping a run isn't destructive.
+
+### Added
+- **"Permissions" section in the README** — maps each capability Obsidian's automated review flags (direct filesystem access, shell execution, vault enumeration, clipboard) to exactly what Uru does with it: all filesystem access stays outside the vault, notes are read only through the vault API, every spawned process is a fixed binary with a fixed argument list, and clipboard use is write-only behind the Copy-diagnostics buttons.
+
 ## [0.1.14] — 2026-07-20
 
 ### Fixed
